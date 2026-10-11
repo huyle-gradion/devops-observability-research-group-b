@@ -1,0 +1,36 @@
+# Build context for app/Dockerfile (repository root). Keep the context small and
+# never let secrets, credentials, agent state or local output enter a layer.
+
+# Version control and git-adjacent metadata.
+.git
+.gitignore
+
+# Agent planning/scratch state and evidence captures.
+.omo
+.scratch
+captures
+
+# Documentation (not a build input).
+docs
+
+# Secrets and cluster credentials — must never reach the build context.
+.env
+.env.*
+*.kubeconfig
+kubeconfig
+*.pem
+*.key
+
+# Node dependencies and local build output.
+node_modules
+bin
+dist
+build
+
+# Editor / OS noise.
+.DS_Store
+*.swp
+*~
+
+# NOTE: app/ is deliberately NOT ignored — app/go.mod and app/*.go are the build
+# inputs copied by app/Dockerfile.

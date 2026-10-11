@@ -54,7 +54,8 @@ actually checked.
 | Item | Value | Source URL | Producing stage | Checked date |
 |---|---|---|---|---|
 | Image digest (index) | pending | pending | 03–04 | pending |
-| Base image digest | pending | pending | 03 | pending |
+| Builder base index digest (`golang:1.27`) | `sha256:e432b43af23a9328d56a7c499be0476810aa344acbcf65fc7c455d4ff5a40602` | https://hub.docker.com/_/golang | 03 | 2026-10-11 |
+| Runtime base index digest (`gcr.io/distroless/static-debian13:nonroot`) | `sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3` | https://github.com/GoogleContainerTools/distroless | 03 | 2026-10-11 |
 | kube-prometheus-stack chart version | pending | pending | 09 | pending |
 | OpenTelemetry Collector version | pending | pending | 10 | pending |
 | Go module pins | pending | pending | 02 | pending |
@@ -62,3 +63,9 @@ actually checked.
 | OTel JS Web SDK package version | pending | pending | 11 | pending |
 | k3s version | pending | pending | 06 | pending |
 | Argo CD or Flux version | pending | pending | 08 | pending |
+
+Both Stage 03 bases above are multi-platform OCI image indexes that include
+`linux/amd64` and `linux/arm64`; the digests were confirmed live against the
+registries (anonymous manifest requests) on 2026-10-11. Stage 03 exercises only the
+native amd64 build and run. CI multi-platform publication and arm64 native execution
+are verified later (Stage 04), not here.
