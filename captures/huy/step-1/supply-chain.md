@@ -39,6 +39,23 @@ Artifact: `ghcr.io/huyle-gradion/devops-app-huy@sha256:0716851ad477e43ec04365149
   surface) and is **not** proof of universal safety — it reflects the scanner, DB snapshot
   and date. This is a report, not an enforced gate (the assignment makes scanning optional).
 
+## 05C — deliberate red→green publication gate
+
+Owner-authorized negative experiment (temporary failing source push, then restore):
+
+| Run | Commit | Event | check | publish | smoke | Result |
+|---|---|---|---|---|---|---|
+| `38120272573` | `dd3396bf3a` (merge of red `c5e7ca0`) | push `personal/huy` | **failure** | **skipped** | **skipped** | publication gated on green |
+| `38120319247` | `1c068ee1ed` (merge of restore `7e3beff`) | push `personal/huy` | success | success | success | green restored |
+
+- The red revision changed `/health`'s body to `OK\n`; the behavior test failed
+  (`body = "OK\n", want "ok\n"`), so `check` failed and `publish`/`smoke` were skipped.
+- The red revision exists in history only as gating evidence and was never promoted; the
+  restoring commit returns `/health` to `ok\n`.
+- **Test-design finding:** the behavior test compares `/health` against the app's
+  `healthBody` constant, so editing the constant alone would not fail the test — only a
+  real wire change (as used here) does. Worth tightening later to pin the literal bytes.
+
 ## Boundaries
 
 - arm64 is a published manifest + arm64 SBOM, **not** a native arm64 execution test.
