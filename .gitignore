@@ -1,0 +1,39 @@
+# Secrets — never commit credentials or environment files.
+.env
+.env.*
+
+# Local kubeconfigs / cluster credentials (owned locally, mode 0600).
+*.kubeconfig
+huy-k3s.yaml
+kubeconfig
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+*.coverage
+.coverage
+coverage/
+coverage.out
+
+# Node
+node_modules/
+npm-debug.log*
+
+# Build output / transient artifacts
+/bin/
+/dist/
+build/
+*.log
+
+# Evidence captures are committed (screenshots, logs, JSON, Markdown).
+# Re-include them after the transient *.log rule above.
+!captures/**
+
+# Editor / OS noise
+.DS_Store
+*.swp
+*~
