@@ -53,7 +53,7 @@ actually checked.
 
 | Item | Value | Source URL | Producing stage | Checked date |
 |---|---|---|---|---|
-| Image digest (index) | pending | pending | 03–04 | pending |
+| Image digest (index) | `sha256:737f62c891b4f7fcebc3bf5c77e004ece31f12c4ee7854efe3eae21dc02fe430` | https://github.com/huyle-gradion/devops-observability-research-group-b/pkgs/container/devops-app-huy | 04 | 2026-10-11 |
 | Builder base index digest (`golang:1.27`) | `sha256:e432b43af23a9328d56a7c499be0476810aa344acbcf65fc7c455d4ff5a40602` | https://hub.docker.com/_/golang | 03 | 2026-10-11 |
 | Runtime base index digest (`gcr.io/distroless/static-debian13:nonroot`) | `sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3` | https://github.com/GoogleContainerTools/distroless | 03 | 2026-10-11 |
 | kube-prometheus-stack chart version | pending | pending | 09 | pending |
