@@ -70,5 +70,8 @@ with the HTTP probes added in the cluster stage).
 
 Pull requests never publish: `publish` and `smoke` are gated on a push to
 `personal/huy`, and the workflow's default `permissions` are empty. Only the
-trusted `publish`/`smoke` steps receive the project token. Action pins are
-recorded in [`docs/huy/versions.md`](docs/huy/versions.md).
+trusted `publish`/`smoke` steps receive the project token. Additionally, `publish`
+now attaches signed SLSA build provenance for the pushed digest via
+`actions/attest-build-provenance`, signed with the workflow's short-lived OIDC
+identity (`id-token: write`), which is separate from the project PAT. Action pins
+are recorded in [`docs/huy/versions.md`](docs/huy/versions.md).

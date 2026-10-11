@@ -87,8 +87,27 @@ These SHAs were supplied by the owner-controlled execution directive for Stage 0
 they were not independently re-resolved here (no outbound network to the GitHub API
 from the worker sandbox). Sisyphus should confirm each release commit before push.
 
-The workflow uses only four of these pins: `actions/setup-go`,
+The Stage 04 workflow uses only four of these pins: `actions/setup-go`,
 `docker/setup-buildx-action`, `docker/login-action` and `docker/build-push-action`.
 `actions/checkout` is recorded here for reference but is not referenced by
 `.github/workflows/ci.yml`, which checks out the public change with plain anonymous
 Git so no default GitHub token is ever injected.
+
+## GitHub Actions pins (Stage 05 — signed provenance addendum)
+
+Stage 05 substep 05A adds one pinned action to the `publish` job. The stage plan
+named the generic `actions/attest`, but that action is a generic attestation
+primitive that requires the caller to supply a predicate; the action actually
+executed is **`actions/attest-build-provenance`**, which generates SLSA build
+provenance signed with the workflow's short-lived OIDC identity (`id-token: write`),
+not the generic `actions/attest`. (As of v4 the wrapper is a thin layer over
+`actions/attest`; v4.2.2 pins `actions/attest@508db95dd578ae2727ebd6217d5ba78e4fbda05d`
+internally.)
+
+| Action | Version | Commit SHA | Source URL |
+|---|---|---|---|
+| `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` | https://github.com/actions/attest-build-provenance/releases/tag/v4.2.2 |
+
+The v4.2.2 commit SHA above was independently confirmed live on 2026-10-11 via an
+anonymous public `GET /repos/actions/attest-build-provenance/commits/v4.2.2`
+(returned `4d101475d8b20a2381f78447822ac1eab6504dd8`, a validly-signed release commit).
