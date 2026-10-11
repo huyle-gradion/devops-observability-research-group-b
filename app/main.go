@@ -77,7 +77,7 @@ func newHandler(id, appEnv string) http.Handler {
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
-	writeText(w, http.StatusOK, healthBody)
+	writeText(w, http.StatusOK, "OK\n") // NEGATIVE EXPERIMENT: deliberate wire change
 }
 
 func handleTest(id, appEnv string) http.HandlerFunc {
