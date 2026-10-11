@@ -59,7 +59,7 @@ actually checked.
 | kube-prometheus-stack chart version | pending | pending | 09 | pending |
 | OpenTelemetry Collector version | pending | pending | 10 | pending |
 | Go module pins | pending | pending | 02 | pending |
-| GitHub Actions pinned revisions | pending | pending | 04 | pending |
+| GitHub Actions pinned revisions | see "GitHub Actions pins" below | per-action release pages | 04 | 2026-10-11 |
 | OTel JS Web SDK package version | pending | pending | 11 | pending |
 | k3s version | pending | pending | 06 | pending |
 | Argo CD or Flux version | pending | pending | 08 | pending |
@@ -69,3 +69,26 @@ Both Stage 03 bases above are multi-platform OCI image indexes that include
 registries (anonymous manifest requests) on 2026-10-11. Stage 03 exercises only the
 native amd64 build and run. CI multi-platform publication and arm64 native execution
 are verified later (Stage 04), not here.
+
+## GitHub Actions pins (Stage 04 — 2026-10-11)
+
+`.github/workflows/ci.yml` pins every action to a reviewed release commit, never a
+moving major tag. Source URLs are the action release pages.
+
+| Action | Version | Commit SHA | Source URL |
+|---|---|---|---|
+| `actions/checkout` | v7.0.1 | `3d3c42e5aac5ba805825da76410c181273ba90b1` | https://github.com/actions/checkout/releases/tag/v7.0.1 |
+| `actions/setup-go` | v7.0.0 | `b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` | https://github.com/actions/setup-go/releases/tag/v7.0.0 |
+| `docker/setup-buildx-action` | v4.4.1 | `f87e5991a6d7451dcb8d9637bfbc97413f497069` | https://github.com/docker/setup-buildx-action/releases/tag/v4.4.1 |
+| `docker/login-action` | v4.6.0 | `dbcb813823bdd20940b903addbd779551569679f` | https://github.com/docker/login-action/releases/tag/v4.6.0 |
+| `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` | https://github.com/docker/build-push-action/releases/tag/v7.4.0 |
+
+These SHAs were supplied by the owner-controlled execution directive for Stage 04;
+they were not independently re-resolved here (no outbound network to the GitHub API
+from the worker sandbox). Sisyphus should confirm each release commit before push.
+
+The workflow uses only four of these pins: `actions/setup-go`,
+`docker/setup-buildx-action`, `docker/login-action` and `docker/build-push-action`.
+`actions/checkout` is recorded here for reference but is not referenced by
+`.github/workflows/ci.yml`, which checks out the public change with plain anonymous
+Git so no default GitHub token is ever injected.

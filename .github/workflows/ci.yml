@@ -1,0 +1,182 @@
+name: ci
+
+# Trigger boundaries: only the personal/huy integration branch publishes. Pull
+# requests target that same branch, run the check job, and can never publish.
+# There is deliberately no pull_request_target and no trigger on env/huy.
+on:
+  push:
+    branches:
+      - personal/huy
+    paths:
+      - 'app/**'
+      - 'web/**'
+      - '.github/workflows/ci.yml'
+      - '.dockerignore'
+  pull_request:
+    branches:
+      - personal/huy
+    paths:
+      - 'app/**'
+      - 'web/**'
+      - '.github/workflows/ci.yml'
+      - '.dockerignore'
+
+# Deny the built-in GITHUB_TOKEN everywhere by default. Jobs grant only the
+# minimal scope they need, and the project PAT is passed explicitly instead of
+# relying on any implicit token.
+permissions: {}
+
+jobs:
+  # Runs for every push and pull request. Receives NO project secret and no
+  # built-in token: the public repository is fetched anonymously.
+  check:
+    name: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the change anonymously
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          git init
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            git fetch --depth=1 origin "refs/pull/${PR_NUMBER}/merge"
+          else
+            git fetch --depth=1 origin "${GITHUB_SHA}"
+          fi
+          git checkout FETCH_HEAD
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.27'
+          # Empty disables the action's default github.token authentication.
+          token: ''
+
+      - name: Vet and test
+        working-directory: app
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Build the native image (no login, no push)
+        run: docker build -f app/Dockerfile -t ci-check .
+
+  # Trusted source-push publication only. Requires a green check and a push to
+  # personal/huy; pull_request events never reach this job.
+  publish:
+    name: publish
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/personal/huy'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - name: Check out the trusted source anonymously
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git init
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --depth=1 origin "${GITHUB_SHA}"
+          git checkout FETCH_HEAD
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: huyle-gradion
+          password: ${{ secrets.PROJECT_GITHUB_TOKEN }}
+
+      - name: Build and push the multi-platform image
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: app/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ghcr.io/huyle-gradion/devops-app-huy:${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/huyle-gradion/devops-observability-research-group-b
+            org.opencontainers.image.revision=${{ github.sha }}
+          sbom: true
+          provenance: mode=max
+          # Explicit project token; never the action's default github.token.
+          github-token: ${{ secrets.PROJECT_GITHUB_TOKEN }}
+
+  # Native runtime smoke of the exact published digest. Runs only after a
+  # successful publish; the runner uses docker/curl, never a shell in distroless.
+  smoke:
+    name: smoke
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: huyle-gradion
+          password: ${{ secrets.PROJECT_GITHUB_TOKEN }}
+
+      - name: Pull the published digest
+        env:
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker pull "ghcr.io/huyle-gradion/devops-app-huy@${DIGEST}"
+
+      - name: Run and smoke-test the digest
+        env:
+          DIGEST: ${{ needs.publish.outputs.digest }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/huyle-gradion/devops-app-huy@${DIGEST}"
+          CID="$(docker run -d --name ci-smoke \
+            -p 127.0.0.1:18080:8080 -e APP_ENV=ci-proof "${IMAGE}")"
+
+          cleanup() {
+            docker stop ci-smoke >/dev/null 2>&1 || true
+            docker rm -f ci-smoke >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          # Bounded startup poll: fail if /health never answers in time.
+          deadline=$((SECONDS + 30))
+          until curl -fsS -o /dev/null "http://127.0.0.1:18080/health"; do
+            if [ "${SECONDS}" -ge "${deadline}" ]; then
+              echo "startup timeout: /health not ready within 30s" >&2
+              docker logs "${CID}" >&2 || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          HOSTNAME="$(docker inspect "${CID}" --format '{{.Config.Hostname}}')"
+
+          health_code="$(curl -sS -o /tmp/health.body -w '%{http_code}' http://127.0.0.1:18080/health)"
+          [ "${health_code}" = "200" ] || { echo "health status ${health_code}, want 200" >&2; exit 1; }
+          [ "$(cat /tmp/health.body)" = "ok" ] || { echo "health body '$(cat /tmp/health.body)', want 'ok'" >&2; exit 1; }
+
+          test_code="$(curl -sS -D /tmp/test.headers -o /tmp/test.body -w '%{http_code}' http://127.0.0.1:18080/test)"
+          [ "${test_code}" = "200" ] || { echo "test status ${test_code}, want 200" >&2; exit 1; }
+          expected="Hello world from container-${HOSTNAME}"
+          [ "$(cat /tmp/test.body)" = "${expected}" ] || { echo "test body '$(cat /tmp/test.body)', want '${expected}'" >&2; exit 1; }
+          grep -qi '^X-App-Env: ci-proof' /tmp/test.headers || { echo "missing or wrong X-App-Env header" >&2; cat /tmp/test.headers >&2; exit 1; }
+
+          echo "smoke ok: hostname ${HOSTNAME}, digest ${DIGEST}"

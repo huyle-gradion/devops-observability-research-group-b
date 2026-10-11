@@ -50,3 +50,25 @@ curl -i http://127.0.0.1:18080/test
 The runtime image contains no shell or package manager, so the container has no
 in-image `HEALTHCHECK`; health is checked externally against `/health` (for example
 with the HTTP probes added in the cluster stage).
+
+## CI
+
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on pushes to
+`personal/huy` and on pull requests targeting it, both filtered to `app/**`,
+`web/**`, the workflow file and `.dockerignore`.
+
+- `check` receives no project secret. It checks out the change anonymously
+  (`git init` + public fetch of the push SHA or the PR merge ref), runs
+  `go vet ./...` and `go test ./...` in `app/`, then a native
+  `docker build -f app/Dockerfile -t ci-check .`. It never logs in or pushes.
+- `publish` (push to `personal/huy` only) builds and pushes the multi-platform
+  (`linux/amd64`, `linux/arm64`) image `ghcr.io/huyle-gradion/devops-app-huy` with
+  a full-SHA tag, SBOM and maximum provenance, and exposes the published digest.
+- `smoke` (`needs: publish`) pulls that exact digest, runs it on loopback with
+  `APP_ENV=ci-proof`, and asserts `/health` is `200 ok` and `/test` returns
+  `200 Hello world from container-<hostname>` with header `X-App-Env: ci-proof`.
+
+Pull requests never publish: `publish` and `smoke` are gated on a push to
+`personal/huy`, and the workflow's default `permissions` are empty. Only the
+trusted `publish`/`smoke` steps receive the project token. Action pins are
+recorded in [`docs/huy/versions.md`](docs/huy/versions.md).
