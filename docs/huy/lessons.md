@@ -7,23 +7,23 @@ that actually happened are recorded. Where the cause is not yet known, the expla
 is `pending` rather than guessed. Agent-written text does not certify understanding;
 the owner's own reproduction and explanation is the learning gate.
 
-## Lesson 1 — Docker engine not reachable
+## Lesson 1 — Docker engine not reachable → now active
 
 | Field | Content |
 |---|---|
 | Expected | Docker engine is running and the worker can exercise it with the authorized operations. |
-| Observed | At check time the docker **client** (29.7.2) is present but the **engine** is inactive. |
-| Explanation | pending owner-run of the authorized fix (`sudo systemctl start docker`). |
-| Evidence | `docker --version` reports 29.7.2; `docker info` returned client-only output with the engine not responding. Recorded 2026-10-11. |
+| Observed | Initially at check time the docker **client** (29.7.2) was present but the **engine** was inactive. After the owner ran the authorized fix, `systemctl is-active docker` = `active` and the engine responds: server Engine 29.7.2, API 1.55; `sudo docker run --rm hello-world` ran successfully (amd64). |
+| Explanation | The authorized fix (`sudo systemctl start docker`), run by the owner, brought the engine up. Engine and container run are now verified. |
+| Evidence | `sudo docker version` (server Engine 29.7.2, API 1.55, containerd v2.3.5, runc 1.5.1, linux/amd64) and `sudo docker run --rm hello-world` (pulled `library/hello-world`, digest `sha256:5e23090353324d887c48ad5e5c56d294eab81588df9605b07d1afe895f9cc8f8`, printed `Hello from Docker!`). Recorded 2026-10-11. |
 
 ## Lesson 2 — `sudo -n` requires a password
 
 | Field | Content |
 |---|---|
 | Expected | Non-interactive sudo (`sudo -n true`) succeeds, allowing scripted privileged steps. |
-| Observed | `sudo -n true` fails: "sudo: a password is required" (exit 1). |
-| Explanation | pending owner-run; this is a human sudo gate, not a worker-solvable permission. |
-| Evidence | `sudo -n true` exit code 1, message recorded 2026-10-11. No socket/permission changes were attempted. |
+| Observed | `sudo -n true` fails: "sudo: a password is required" (exit 1). This still holds after the Docker fix: the engine is now active, but the user is not in the `docker` group, so privileged docker access continues to require an explicit password-bearing `sudo docker` (or the service must be started by the owner). |
+| Explanation | This is a human sudo gate, not a worker-solvable permission. The owner ran the authorized engine start; the gate for privileged commands remains. |
+| Evidence | `sudo -n true` exit code 1, message recorded 2026-10-11. `sudo docker version` succeeded only because the owner supplied a password; a non-sudo `docker run` returned a socket permission error (see Actual errors). No socket/permission changes were attempted. |
 
 ## Lesson 3 — Project credential lacks `workflow` scope
 
@@ -41,5 +41,6 @@ lessons above. Add entries as they occur; do not delete an entry because it was 
 
 | Date | Command / action | Error / result | Resolution |
 |---|---|---|---|
-| 2026-10-11 | `sudo -n true` | exit 1, "sudo: a password is required" | pending owner-run |
-| 2026-10-11 | `docker info` | engine inactive / not responding | pending owner-run of `sudo systemctl start docker` |
+| 2026-10-11 | `sudo -n true` | exit 1, "sudo: a password is required" | remains; use explicit password-bearing sudo for privileged commands |
+| 2026-10-11 | `docker info` | engine inactive / not responding | resolved: owner ran `sudo systemctl start docker`; engine now active (29.7.2, API 1.55) |
+| 2026-10-11 | `docker run` (no sudo) | "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" — `/var/run/docker.sock` is `root:docker` mode 660 and the user is not in the `docker` group | use explicit `sudo docker` for this assignment; no socket chmod and no persistent group change |

@@ -13,8 +13,10 @@ fill it with guesses.
 | CPU architecture | `x86_64` (native amd64) | `uname -m` |
 | git | 2.55.0 | `git --version` |
 | go | go1.27.2 linux/amd64 | `go version` |
-| docker (client) | 29.7.2 (build a7dcaa6fdb) | `docker --version` |
-| docker engine | present as client; engine **inactive** at check time | `docker info` showed client only |
+| docker (client) | 29.7.2 (build a7dcaa6fdb), API 1.55, Go go1.26.5, built 2026-08-06, linux/amd64 | `docker --version`; `sudo docker version` |
+| docker engine (server) | **active**; Engine 29.7.2, API 1.55 (minimum 1.40), Go go1.26.5, linux/amd64 | `sudo docker version` (owner-run 2026-10-11) |
+| containerd | v2.3.5 | `sudo docker version` |
+| runc | 1.5.1 | `sudo docker version` |
 | gh | 2.102.0 (2026-09-30) | `gh --version` |
 | curl | 8.22.0 (x86_64-pc-linux-gnu) | `curl --version` |
 | node | v26.10.0 | `node --version` |
