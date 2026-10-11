@@ -37,10 +37,23 @@ smoke ok: hostname ccee2028fff6, digest sha256:737f62c891b4f7fcebc3bf5c77e004ece
 The smoke job asserted `/health` = `200 ok`, `/test` = `200` body
 `Hello world from container-ccee2028fff6` with header `X-App-Env: ci-proof`.
 
-## Package visibility
+## Package visibility and anonymous access (04C)
 
-`GHCR` package `devops-app-huy` is currently **private**. The owner must set it public so
-the anonymous digest pull (04C) can be recorded. Public repo does not imply public package.
+The owner set `devops-app-huy` to **public** (the REST visibility PATCH returned 404, so a UI
+step was used). Anonymous proof (empty Docker config, no credentials):
+
+- `docker buildx imagetools inspect ghcr.io/…@sha256:737f62c8…` resolved the OCI **index**
+  (`application/vnd.oci.image.index.v1+json`) with:
+  - `linux/amd64` → `sha256:f177fa5d…`
+  - `linux/arm64` → `sha256:0c63bb89…`
+  - two `unknown/unknown` **attestation manifests** referencing the amd64/arm64 manifests
+    (`vnd.docker.reference.type: attestation-manifest`).
+- anonymous `docker pull` of the exact digest → `Downloaded newer image`.
+
+The arm64 manifest is an attested publication, **not** a native arm64 execution test.
+
+Cleanup note: `rm -rf "$ANON"` failed with "Permission denied" because `sudo docker` created
+`$ANON/buildx` as root; remove it with `sudo rm -rf <that temp dir>`.
 
 ## Action pins (verified against GitHub releases)
 
