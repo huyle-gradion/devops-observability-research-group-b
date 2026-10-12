@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime"
 	"strconv"
 	"time"
 )
@@ -31,7 +32,7 @@ func main() {
 		os.Exit(1)
 	}
 	appEnv := resolveAppEnv()
-	slog.Info("runtime API starting", "runtime_id", id, "app_env", appEnv, "addr", listenAddr, "pid", os.Getpid())
+	slog.Info("runtime API starting", "runtime_id", id, "app_env", appEnv, "addr", listenAddr, "pid", os.Getpid(), "arch", runtime.GOARCH)
 
 	if err := http.ListenAndServe(listenAddr, newHandler(id, appEnv)); err != nil {
 		slog.Error("http server stopped", "error", err)

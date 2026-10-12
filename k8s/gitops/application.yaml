@@ -12,5 +12,13 @@ spec:
   destination:
     server: https://kubernetes.default.svc
     namespace: devops-app
-  # Manual sync initially: adopt the existing manual objects; no automated block yet.
-  syncPolicy: {}
+  # Stage 08D: automated sync. selfHeal corrects cluster drift; prune removes
+  # resources no longer in Git; allowEmpty:false refuses a blank desired state
+  # (so a bad revision cannot wipe the app). Manual sync in 08C proved the loop;
+  # this is the automatic mode. The bootstrap Namespace stays source-managed.
+  syncPolicy:
+    automated:
+      enabled: true
+      selfHeal: true
+      prune: true
+      allowEmpty: false
