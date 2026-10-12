@@ -96,7 +96,16 @@ func run() int {
 		return 1
 	}
 
-	srv := &http.Server{Addr: listenAddr, Handler: newHandler(id, appEnv)}
+	// Validate the same-origin OTLP proxy target once at startup. A misconfigured
+	// Collector endpoint is a fail-fast startup error, not a lazy per-request
+	// failure that the first browser export would discover.
+	proxyTarget, err := resolveOTLPTarget()
+	if err != nil {
+		slog.Error("invalid OTLP trace proxy target", "error", err)
+		return 1
+	}
+
+	srv := &http.Server{Addr: listenAddr, Handler: newHandlerWithProxy(id, appEnv, newHandlerMetrics(), newOTLPTraceProxy(proxyTarget))}
 
 	serveErr := make(chan error, 1)
 	go func() { serveErr <- srv.ListenAndServe() }()
@@ -167,7 +176,22 @@ func newHandler(id, appEnv string) http.Handler {
 // newHandlerWithMetrics builds the router around an explicit metrics owner. The
 // serving path uses newHandler, which creates one handlerMetrics per handler;
 // tests may pass their own to inspect the same registry that /metrics serves.
+// This constructor resolves the OTLP proxy target itself for the test path; the
+// serving path (run) resolves and validates it once before reaching here.
 func newHandlerWithMetrics(id, appEnv string, m *handlerMetrics) http.Handler {
+	target, err := resolveOTLPTarget()
+	if err != nil {
+		// run() validates the same target before serving and fails startup on
+		// error, so this only occurs on a non-serving construction path. The
+		// route stays registered and bounded (502) rather than disappearing.
+		slog.Error("OTLP trace proxy target invalid", "error", err)
+	}
+	return newHandlerWithProxy(id, appEnv, m, newOTLPTraceProxy(target))
+}
+
+// newHandlerWithProxy builds the router around an explicit metrics owner and an
+// already-resolved trace proxy, which run() constructs from a validated target.
+func newHandlerWithProxy(id, appEnv string, m *handlerMetrics, proxy http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	// "GET" patterns match GET and HEAD. Go's ServeMux therefore answers HEAD
@@ -196,6 +220,11 @@ func newHandlerWithMetrics(id, appEnv string, m *handlerMetrics) http.Handler {
 	mux.HandleFunc("GET /static/app.js", handleBundle)
 	mux.Handle("GET /test", otelhttp.NewHandler(m.instrumentTest(handleTest(id, appEnv)), testHandlerSpanName))
 	mux.Handle("GET /metrics", m.handler())
+	// The one bounded same-origin OTLP ingestion route. ServeMux rejects any
+	// other method on this path with 405 before the proxy runs. It is never
+	// wrapped in otelhttp and never touches the workload metric series, so the
+	// export path cannot instrument itself into a recursion.
+	mux.Handle("POST "+otelProxyRoute, proxy)
 	return mux
 }
 
