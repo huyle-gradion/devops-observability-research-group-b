@@ -57,7 +57,7 @@ actually checked.
 | Builder base index digest (`golang:1.27`) | `sha256:e432b43af23a9328d56a7c499be0476810aa344acbcf65fc7c455d4ff5a40602` | https://hub.docker.com/_/golang | 03 | 2026-10-11 |
 | Runtime base index digest (`gcr.io/distroless/static-debian13:nonroot`) | `sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3` | https://github.com/GoogleContainerTools/distroless | 03 | 2026-10-11 |
 | kube-prometheus-stack chart version | `92.3.0` (appVersion `v0.94.1`) | https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack | 09 (09B) | 2026-10-12 |
-| OpenTelemetry Collector version | pending | pending | 10 | pending |
+| OpenTelemetry Collector version | `0.162.0` (contrib distribution; core module `v0.162.0`) | https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v0.162.0 | 10 (10A) | 2026-10-12 |
 | Go module pins | pending | pending | 02 | pending |
 | GitHub Actions pinned revisions | see "GitHub Actions pins" below | per-action release pages | 04 | 2026-10-11 |
 | OTel JS Web SDK package version | pending | pending | 11 | pending |
@@ -218,3 +218,57 @@ controller-manager, etcd and kube-proxy are absent as intended).
 `kubectl apply -f k8s/monitoring/servicemonitor.yaml` were **not** run here — this
 worker has no kubeconfig and no cluster access. Sisyphus/owner runs the real install;
 these digests are what that install will pull.
+
+## Tracing stack pins — Stage 10A (2026-10-12)
+
+Substep 10A pins the OpenTelemetry Collector and the Jaeger viewer by **tag + digest**.
+Both digests were resolved and confirmed **anonymously** on 2026-10-12 against their
+registries (`docker-content-digest` from a manifest `HEAD`, no credential), and they
+match the references supplied for the stage.
+
+| Component | Image | Tag | Digest (multi-arch index) | Registry source |
+|---|---|---|---|---|
+| Collector (contrib) | `ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib` | `0.162.0` | `sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6` | https://github.com/open-telemetry/opentelemetry-collector-releases/pkgs/container/opentelemetry-collector-contrib |
+| Jaeger (all-in-one) | `jaegertracing/jaeger` | `2.22.0` | `sha256:836b967b5abcf1f7758066aa6b348619267a2f1459f72d472840570f9bd88a17` | https://hub.docker.com/r/jaegertracing/jaeger |
+
+The same Jaeger image is mirrored at `cr.jaegertracing.io/jaegertracing/jaeger:2.22.0`
+(the reference the Jaeger *getting started* doc uses); `k8s/tracing/jaeger.yaml` pins the
+Docker Hub name plus digest.
+
+Jaeger runs its **embedded all-in-one** configuration
+(`cmd/jaeger/internal/all-in-one.yaml`, compiled into the binary): OTLP/HTTP on
+`0.0.0.0:4318`, the UI on `16686`, and **transient in-memory** trace storage
+(`jaeger_storage` → `memory`, `max_traces: 100000`). No PVC and no durable-storage claim.
+
+### Collector component / module versions
+
+`otelcol-contrib --version` reports `0.162.0`. In this version the OTLP/HTTP **exporter**
+type is `otlp_http` (canonical) with `otlphttp` as its **deprecated alias** — the exporter
+module is `go.opentelemetry.io/collector/exporter/otlphttpexporter v0.162.0` (reported by
+`otelcol-contrib components`). The obsolete Jaeger-native `jaeger` **exporter** does
+**not** exist in 0.162.0; the manifest uses `otlp` (receiver) → `otlp_http/jaeger`
+(exporter), never the removed exporter or its old gRPC-era endpoint.
+
+### Collector `validate` evidence (this worker, 2026-10-12)
+
+No local docker daemon was reachable (`sudo` needs a password), so the config was
+validated against the pinned **release binary** instead of the container image — same
+version, checksum-verified against the published `.sha256`:
+
+```text
+otelcol-contrib_0.162.0_linux_amd64.tar.gz
+  published sha256 fcc063749f730f8c21fe29f2d340ff174f5f1c5885bd3156fb6c985a3036fcc3  (matched)
+otelcol-contrib version 0.162.0
+
+# config extracted from the ConfigMap in k8s/tracing/collector.yaml
+./otelcol-contrib validate --config /tmp/opencode/otel-collector-config.yaml   # exit 0
+```
+
+`validate` accepted the extracted ConfigMap config (exit 0, no output). Negative control:
+a config using the obsolete `jaeger` exporter fails with
+`'exporters' unknown type: "jaeger" ... (valid values: [... otlp_http ... otlphttp ...])`,
+so the check discriminates rather than rubber-stamping.
+
+**Unrun:** the image-form `docker run ... validate` (runbook §10.1) and every cluster step
+(`kubectl apply`, rollout status, port-forward) were **not** run here — no docker daemon
+and no cluster access. Sisyphus/owner runs them and captures the cluster evidence.

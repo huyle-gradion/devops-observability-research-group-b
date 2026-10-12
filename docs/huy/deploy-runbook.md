@@ -297,3 +297,86 @@ its node and volume survive.
 This worker authored the JSON and these steps but has **no cluster access**, so the
 import, save, live panel observation and the pod-deletion persistence proof were **not**
 run here. Sisyphus/owner performs them and captures the evidence.
+
+## 10. Tracing stack (Stage 10)
+
+The app's OTLP/HTTP traces go to an **OpenTelemetry Collector**, which forwards them
+over OTLP/HTTP to a **Jaeger all-in-one** viewer. Both live in the `monitoring`
+namespace (created by Stage 09B). Manifests: `k8s/tracing/collector.yaml` and
+`k8s/tracing/jaeger.yaml`; the pinned image digests are recorded in
+[`versions.md`](versions.md).
+
+Path:
+
+```text
+app OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector.monitoring.svc.cluster.local:4318
+  -> Service otel-collector:4318
+  -> Collector otlp_http/jaeger exporter
+  -> http://jaeger.monitoring.svc.cluster.local:4318
+  -> Jaeger viewer UI on 16686
+```
+
+The Jaeger viewer uses **transient in-memory** storage: a pod restart loses every trace.
+Do not describe it as durable. There is no PVC, no Ingress and no tunnel — the UI is
+reachable only through a `kubectl port-forward`.
+
+### 10.1 Validate the Collector config against the EXACT image
+
+`k8s/tracing/collector.yaml` embeds the Collector config in a ConfigMap. Extract it and
+run the pinned image's own `validate` **before** applying — a config accepted only by a
+different Collector version would silently break trace export:
+
+```sh
+export KUBECONFIG="$HOME/.kube/huy-k3s.yaml"
+
+# Extract the embedded config.yaml to a local file (python3 + PyYAML).
+python3 -c 'import yaml; d=list(yaml.safe_load_all(open("k8s/tracing/collector.yaml"))); print([x for x in d if x["kind"]=="ConfigMap"][0]["data"]["config.yaml"], end="")' \
+  > /tmp/otel-collector-config.yaml
+
+# Validate with the pinned image (needs a working local docker daemon).
+docker run --rm \
+  -v /tmp/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro \
+  ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6 \
+  validate --config /etc/otelcol-contrib/config.yaml
+```
+
+Success is exit status **0** with no error output. An unknown component or field is
+reported and exits non-zero — the removed `jaeger` exporter, for example, fails with
+`'exporters' unknown type: "jaeger"`. If a cluster is available and no local docker
+daemon is, run the same `validate` as a one-off owned Job in `monitoring` instead.
+
+### 10.2 Apply and wait
+
+```sh
+export KUBECONFIG="$HOME/.kube/huy-k3s.yaml"
+kubectl apply -n monitoring -f k8s/tracing/
+kubectl -n monitoring rollout status deployment/otel-collector --timeout=120s
+kubectl -n monitoring rollout status deployment/jaeger --timeout=120s
+kubectl -n monitoring get pods,svc
+```
+
+Expect one `otel-collector` pod and one `jaeger` pod `Running`/Ready, plus ClusterIP
+Services `otel-collector` (port `otlp-http` 4318) and `jaeger` (ports `jaeger4318` 4318
+and `jaeger16686` 16686).
+
+> The Jaeger viewer port is exposed under the Service port name `jaeger16686`, not a bare
+> `16686`: Kubernetes rejects an all-numeric Service port name (`IsValidPortName` requires
+> at least one letter). The port **number** is still 16686.
+
+### 10.3 Reach the private UI
+
+```sh
+kubectl -n monitoring port-forward svc/jaeger 16686:16686
+```
+
+Open <http://127.0.0.1:16686>, select the **`devops-app-huy`** service, and inspect a
+real request's server and child spans. Restarting the `jaeger` pod empties the viewer —
+regenerate a trace rather than treating that as data loss.
+
+### 10.4 Unrun here
+
+This worker has **no local docker daemon and no cluster access**, so the `docker run ...
+validate`, the `kubectl apply`, the rollout waits and the port-forward were **not** run
+here. The Collector config was instead validated offline against the exact `0.162.0`
+release binary (checksum-verified; see [`versions.md`](versions.md)); Sisyphus/owner runs
+the image `validate` and the cluster steps and captures the evidence.

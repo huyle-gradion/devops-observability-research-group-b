@@ -1,0 +1,121 @@
+# OpenTelemetry Collector (contrib) for the Stage 10 tracing path.
+#
+# Deploy together with jaeger.yaml in the `monitoring` namespace. The collector
+# receives OTLP/HTTP traces from the app and forwards them over OTLP/HTTP to the
+# Jaeger all-in-one viewer (Service `jaeger`, port 4318).
+#
+# This config is a ConfigMap, not a Secret: it carries no credentials and no
+# per-deployment state.
+#
+# Image is pinned by BOTH tag and digest. The tag is documentation; the digest
+# is what the kubelet actually pulls. Do not substitute a moving tag.
+#
+# Validate the embedded collector config against the EXACT pinned image before
+# applying (see docs/huy/deploy-runbook.md, "Stage 10"):
+#
+#   python3 -c 'import yaml; d=list(yaml.safe_load_all(open("k8s/tracing/collector.yaml"))); print([x for x in d if x["kind"]=="ConfigMap"][0]["data"]["config.yaml"], end="")' \
+#     > /tmp/otel-collector-config.yaml
+#   docker run --rm \
+#     -v /tmp/otel-collector-config.yaml:/etc/otelcol-contrib/config.yaml:ro \
+#     ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6 \
+#     validate --config /etc/otelcol-contrib/config.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: otel-collector-config
+  namespace: monitoring
+  labels:
+    app: otel-collector
+data:
+  config.yaml: |
+    receivers:
+      otlp:
+        protocols:
+          http:
+            endpoint: 0.0.0.0:4318
+    processors:
+      # Bound collector memory so a trace burst cannot exhaust the 256Mi limit.
+      memory_limiter:
+        check_interval: 1s
+        limit_mib: 192
+        spike_limit_mib: 32
+      batch: {}
+    exporters:
+      # OTLP/HTTP export to the Jaeger all-in-one OTLP receiver.
+      #
+      # `otlp_http` is the canonical component type in collector v0.162.0;
+      # `otlphttp` is its deprecated alias. The legacy Jaeger-native exporter is
+      # NOT used, and neither is its removed gRPC-era collector endpoint.
+      otlp_http/jaeger:
+        endpoint: http://jaeger.monitoring.svc.cluster.local:4318
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, batch]
+          exporters: [otlp_http/jaeger]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: monitoring
+  labels:
+    app: otel-collector
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: otel-collector
+  template:
+    metadata:
+      labels:
+        app: otel-collector
+    spec:
+      containers:
+        - name: otel-collector
+          image: ghcr.io/open-telemetry/opentelemetry-collector-releases/opentelemetry-collector-contrib:0.162.0@sha256:39923a8e431bd1f57be82411999d389fcfe40857492e4365456d97a4c1f74be6
+          args:
+            - --config
+            - /etc/otelcol-contrib/config.yaml
+          ports:
+            - name: otlp-http
+              containerPort: 4318
+              protocol: TCP
+          volumeMounts:
+            # Replace the image's default config with our ConfigMap file.
+            - name: config
+              mountPath: /etc/otelcol-contrib
+              readOnly: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: config
+          configMap:
+            name: otel-collector-config
+            items:
+              - key: config.yaml
+                path: config.yaml
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: monitoring
+  labels:
+    app: otel-collector
+spec:
+  type: ClusterIP
+  selector:
+    app: otel-collector
+  ports:
+    - name: otlp-http
+      port: 4318
+      targetPort: otlp-http
+      protocol: TCP
