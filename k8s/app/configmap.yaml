@@ -9,3 +9,6 @@ data:
   # Injected into the container via envFrom so APP_ENV comes from the cluster,
   # not from the image. No API keys or Secret material live here.
   APP_ENV: "cluster-huy"
+  # Stage 10B: OTLP HTTP base endpoint for the Collector in monitoring.
+  # The Go exporter appends /v1/traces itself. Old images ignore this key safely.
+  OTEL_EXPORTER_OTLP_ENDPOINT: "http://otel-collector.monitoring.svc.cluster.local:4318"
