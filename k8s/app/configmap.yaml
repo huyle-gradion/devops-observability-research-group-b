@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: devops-app-config
+  namespace: devops-app
+  labels:
+    app: devops-app
+data:
+  # Injected into the container via envFrom so APP_ENV comes from the cluster,
+  # not from the image. No API keys or Secret material live here.
+  APP_ENV: "cluster-huy"
