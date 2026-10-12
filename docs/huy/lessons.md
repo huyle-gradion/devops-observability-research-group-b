@@ -34,6 +34,15 @@ the owner's own reproduction and explanation is the learning gate.
 | Explanation | GitHub requires the `workflow` scope to add or update Actions workflow files (except identical content/path on another branch). Known, owner-owned; not solvable by the worker without broadening credentials, which is forbidden. |
 | Evidence | `docs/agents/github-access.md` records the observed scopes (`repo`, `write:packages`, broad admin/delete; no `workflow`). Recorded 2026-10-11. No fallback token was minted. |
 
+## Lesson 4 — the local Docker image store cannot carry SBOM/provenance
+
+| Field | Content |
+|---|---|
+| Expected | A `docker/build-push-action` step with `sbom: true`, `provenance: mode=max`, `push: false` and `load: true` builds the image locally and emits its SBOM and provenance. |
+| Observed | Not run in CI yet, but BuildKit rejects that combination. Attaching attestations needs an image exporter that supports them; the `docker` exporter behind `--load`/`type=docker` does not, so buildx fails with `docker exporter does not currently support exporting manifest lists` unless the daemon exposes the OCI importer. |
+| Explanation | The buildx source (`build/opt.go`) only converts a `docker` export to an OCI export when the daemon advertises `OCIImporter`; otherwise any attestation request is an error. The default GitHub runner image store does not guarantee that. The six-job build therefore uses `outputs: type=oci,dest=...` for the no-push build (which does support attestations) and lets the smoke job build its own runnable copy with plain `docker build`. The signed, published attestations stay the ones the `publish` job emits. |
+| Evidence | buildx validation read in `build/opt.go` (`supportAttestations` / `docker exporter does not currently support exporting manifest lists`); see also docker/buildx issues #1714 and docker/build-push-action #1135. Recorded 2026-10-12. |
+
 ## Actual errors
 
 Raw failures encountered while doing this work, kept separate from the structured
@@ -44,3 +53,4 @@ lessons above. Add entries as they occur; do not delete an entry because it was 
 | 2026-10-11 | `sudo -n true` | exit 1, "sudo: a password is required" | remains; use explicit password-bearing sudo for privileged commands |
 | 2026-10-11 | `docker info` | engine inactive / not responding | resolved: owner ran `sudo systemctl start docker`; engine now active (29.7.2, API 1.55) |
 | 2026-10-11 | `docker run` (no sudo) | "permission denied while trying to connect to the docker API at unix:///var/run/docker.sock" — `/var/run/docker.sock` is `root:docker` mode 660 and the user is not in the `docker` group | use explicit `sudo docker` for this assignment; no socket chmod and no persistent group change |
+| 2026-10-12 | `docker build -f app/Dockerfile -t devops-app-huy:ci-local .` | same "permission denied" on the docker API socket; `sudo -n true` still exits 1 | local image build/run checks could not be run on the workstation; they remain for the GitHub runner and the owner's password-bearing reproduction |
