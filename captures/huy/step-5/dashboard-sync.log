@@ -1,0 +1,6 @@
+snapshot at 19:17 UTC
+sum(rate(http_requests_total{namespace="devops-app",rou -> [({}, 105.2288)]
+sum(rate(http_requests_total{namespace="devops-app",rou -> [({}, 0.0997)]
+histogram_quantile(0.95, sum by (le) (rate(http_request -> [({}, 0.1748)]
+sum by (pod) (rate(container_cpu_usage_seconds_total{na -> [({'pod': 'devops-app-698d766b86-g25sr'}, 0.0454), ({'pod': 'devops-app-698d766b86-hv954'}, 0.0003)]
+sum by (pod) (container_memory_working_set_bytes{namesp -> [({'pod': 'devops-app-698d766b86-g25sr'}, 8454144.0), ({'pod': 'devops-app-698d766b86-hv954'}, 4718592.0)]
