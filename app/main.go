@@ -7,6 +7,7 @@ package main
 
 import (
 	"context"
+	"embed"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -49,6 +50,22 @@ const (
 
 	// testWorkSpanName is the child span around the real selected delay/work.
 	testWorkSpanName = "test-work"
+)
+
+// staticFiles holds the two assets served by the page routes. index.html is
+// committed source; app.js is the esbuild bundle generated from web/src by
+// `npm run build` before every embed build (local, CI and Docker). Embedding the
+// generated file is deliberate: if the bundle has not been produced, the Go
+// build fails to compile rather than serving a placeholder.
+//
+//go:embed static/index.html static/app.js
+var staticFiles embed.FS
+
+const (
+	// staticIndexPath is served only at the exact root "/".
+	staticIndexPath = "static/index.html"
+	// staticBundlePath is served only at "/static/app.js".
+	staticBundlePath = "static/app.js"
 )
 
 func main() {
@@ -169,6 +186,14 @@ func newHandlerWithMetrics(id, appEnv string, m *handlerMetrics) http.Handler {
 	// workload span. An upstream W3C traceparent is honored through the global
 	// propagator, which is how the browser stage joins its trace.
 	mux.HandleFunc("GET /health", handleHealth)
+	// The real page and its bundle. "GET /{$}" is ServeMux's exact-root
+	// pattern: it matches only "/", so any other unmatched path keeps the
+	// default 404 and the legacy /healthz and /api/work aliases stay absent.
+	// Only "/static/app.js" is exposed from the embedded assets, and none of
+	// these page routes is wrapped in otelhttp, so they create no workload
+	// span and never enter the workload metric series.
+	mux.HandleFunc("GET /{$}", handleIndex)
+	mux.HandleFunc("GET /static/app.js", handleBundle)
 	mux.Handle("GET /test", otelhttp.NewHandler(m.instrumentTest(handleTest(id, appEnv)), testHandlerSpanName))
 	mux.Handle("GET /metrics", m.handler())
 	return mux
@@ -184,6 +209,30 @@ func tracer() trace.Tracer {
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeText(w, http.StatusOK, healthBody)
+}
+
+// handleIndex serves the single real page at the exact root. The page references
+// only the one bundle path below, so no other embedded file is exposed.
+func handleIndex(w http.ResponseWriter, r *http.Request) {
+	serveEmbedded(w, r, staticIndexPath, "text/html; charset=utf-8")
+}
+
+// handleBundle serves the generated browser bundle at its one path.
+func handleBundle(w http.ResponseWriter, r *http.Request) {
+	serveEmbedded(w, r, staticBundlePath, "text/javascript; charset=utf-8")
+}
+
+// serveEmbedded writes one embedded asset with an explicit content type. A read
+// error cannot happen for a path go:embed accepted at compile time, but it is
+// reported as a plain 404 rather than a panic.
+func serveEmbedded(w http.ResponseWriter, r *http.Request, path, contentType string) {
+	data, err := staticFiles.ReadFile(path)
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", contentType)
+	_, _ = w.Write(data)
 }
 
 // handleTest serves the bounded workload contract inside the otelhttp server

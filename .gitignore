@@ -29,6 +29,12 @@ npm-debug.log*
 build/
 *.log
 
+# Generated browser bundle: produced by `npm run build` in web/ before every
+# embed build (local, CI and Docker). web/ source and the lockfile are
+# committed; this esbuild output is not, so go:embed always compiles against a
+# freshly generated real bundle rather than a committed placeholder.
+app/static/app.js
+
 # Evidence captures are committed (screenshots, logs, JSON, Markdown).
 # Re-include them after the transient *.log rule above.
 !captures/**

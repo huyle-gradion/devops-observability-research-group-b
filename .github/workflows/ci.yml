@@ -68,6 +68,23 @@ jobs:
           token: ''
           cache-dependency-path: app/go.mod
 
+      - name: Set up Node for the browser bundle
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          # Empty disables the action's default github.token authentication, so
+          # this unprivileged check job keeps no implicit GitHub identity.
+          token: ''
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the browser bundle
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
       - name: gofmt check
         working-directory: app
         run: |
@@ -114,6 +131,23 @@ jobs:
           token: ''
           cache-dependency-path: app/go.mod
 
+      - name: Set up Node for the browser bundle
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          # Empty disables the action's default github.token authentication, so
+          # this unprivileged check job keeps no implicit GitHub identity.
+          token: ''
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the browser bundle
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
       - name: Compile the binary
         working-directory: app
         run: CGO_ENABLED=0 go build -o /tmp/ci-compile-app .
@@ -149,6 +183,23 @@ jobs:
           token: ''
           cache-dependency-path: app/go.mod
 
+      - name: Set up Node for the browser bundle
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          # Empty disables the action's default github.token authentication, so
+          # this unprivileged check job keeps no implicit GitHub identity.
+          token: ''
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the browser bundle
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
+
       - name: Test
         working-directory: app
         run: go test ./...
@@ -180,6 +231,23 @@ jobs:
             git fetch --depth=1 origin "${GITHUB_SHA}"
           fi
           git checkout FETCH_HEAD
+
+      - name: Set up Node for the browser bundle
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '26'
+          # Empty disables the action's default github.token authentication, so
+          # this unprivileged build job keeps no implicit GitHub identity.
+          token: ''
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Build the browser bundle
+        working-directory: web
+        run: |
+          set -euo pipefail
+          npm ci
+          npm run build
 
       - name: Set up Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1

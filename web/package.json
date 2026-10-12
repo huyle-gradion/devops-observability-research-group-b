@@ -1,0 +1,13 @@
+{
+  "name": "devops-web-huy",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Browser bundle for the Assignment 3 personal app page (stage 11).",
+  "license": "UNLICENSED",
+  "scripts": {
+    "build": "esbuild src/main.js --bundle --format=iife --target=es2015 --platform=browser --outfile=../app/static/app.js"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

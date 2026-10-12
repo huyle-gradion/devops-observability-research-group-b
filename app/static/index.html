@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>devops-app-huy</title>
+  </head>
+  <body>
+    <main>
+      <h1>devops-app-huy browser check</h1>
+      <p>
+        Clicking the button issues one real same-origin
+        <code>GET /test?delay_ms=100</code> request to this same container.
+      </p>
+
+      <button id="run-test" type="button">Run test</button>
+
+      <section>
+        <h2>Response</h2>
+        <pre id="response">not run yet</pre>
+      </section>
+
+      <section>
+        <h2>Trace id</h2>
+        <pre id="trace-id">not captured yet</pre>
+      </section>
+
+      <section>
+        <h2>Web Vital</h2>
+        <pre id="web-vital">not measured yet</pre>
+      </section>
+    </main>
+
+    <script src="/static/app.js"></script>
+  </body>
+</html>

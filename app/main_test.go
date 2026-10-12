@@ -63,7 +63,6 @@ func TestNewHandler(t *testing.T) {
 		{"unknown path", http.MethodGet, "/unknown", http.StatusNotFound, "", ""},
 		{"legacy work alias", http.MethodGet, "/api/work", http.StatusNotFound, "", ""},
 		{"legacy healthz alias", http.MethodGet, "/healthz", http.StatusNotFound, "", ""},
-		{"root", http.MethodGet, "/", http.StatusNotFound, "", ""},
 		{"post test does not expose workload", http.MethodPost, "/test", http.StatusMethodNotAllowed, "", ""},
 		{"put health rejected", http.MethodPut, "/health", http.StatusMethodNotAllowed, "", ""},
 	}
@@ -102,6 +101,77 @@ func TestNewHandler(t *testing.T) {
 			}
 			if gotEnv := resp.Header.Get("X-App-Env"); gotEnv != tc.wantEnv {
 				t.Errorf("X-App-Env = %q, want %q", gotEnv, tc.wantEnv)
+			}
+		})
+	}
+}
+
+// TestStaticPage proves the real page and its generated bundle are served from
+// exactly the two routes the browser contract names, with real embedded bytes
+// and correct content types, while an unknown path still 404s and no other
+// static file is exposed. The bundle is a build input (web/ npm run build), so a
+// missing bundle is a compile error for this package, never a placeholder that
+// still lets the test pass.
+func TestStaticPage(t *testing.T) {
+	srv := httptest.NewServer(newHandler("static-test-id", "test-env"))
+	defer srv.Close()
+
+	get := func(target string) (*http.Response, string) {
+		t.Helper()
+		resp, err := srv.Client().Get(srv.URL + target)
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("read %s: %v", target, err)
+		}
+		return resp, string(body)
+	}
+
+	t.Run("root serves the page", func(t *testing.T) {
+		resp, body := get("/")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+			t.Errorf("Content-Type = %q, want text/html", ct)
+		}
+		for _, want := range []string{
+			"<h1", ">Run test<", `id="response"`, `id="trace-id"`, `id="web-vital"`, "/static/app.js",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("page body missing %q", want)
+			}
+		}
+	})
+
+	t.Run("bundle is the exact embedded artifact", func(t *testing.T) {
+		resp, body := get("/static/app.js")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/javascript") {
+			t.Errorf("Content-Type = %q, want text/javascript", ct)
+		}
+		want, err := staticFiles.ReadFile(staticBundlePath)
+		if err != nil {
+			t.Fatalf("read embedded bundle: %v", err)
+		}
+		if body != string(want) {
+			t.Errorf("served bundle (%d bytes) != embedded bundle (%d bytes)", len(body), len(want))
+		}
+	})
+
+	for _, target := range []string{"/unknown", "/static/index.html", "/static/other.js"} {
+		t.Run("not served: "+target, func(t *testing.T) {
+			resp, body := get(target)
+			if resp.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404", resp.StatusCode)
+			}
+			if strings.Contains(body, workloadPrefix) {
+				t.Errorf("404 leaked workload: %q", body)
 			}
 		})
 	}

@@ -33,4 +33,10 @@ build
 *~
 
 # NOTE: app/ is deliberately NOT ignored — app/go.mod and app/*.go are the build
-# inputs copied by app/Dockerfile.
+# inputs copied by app/Dockerfile, and the committed app/static/index.html is
+# copied too. The generated app/static/app.js is a build output: app/Dockerfile
+# regenerates it in the `web` stage and copies it into the Go stage before
+# go build, so no committed placeholder is needed. It is explicitly allowed
+# below (not excluded) so a locally generated bundle can also enter the context
+# for an embed build.
+!app/static/app.js
