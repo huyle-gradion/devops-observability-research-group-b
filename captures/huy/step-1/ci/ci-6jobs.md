@@ -139,3 +139,20 @@ to validate the command shape and DB-date capture; the workflow scans its own lo
 - The project credential's missing `workflow` scope still blocks pushing a changed workflow file to
   GitHub from the worker; the branch `stage/huy/04b-ci-6jobs` and its docs remain local until
   Sisyphus publishes on an authorized path.
+
+## Real run evidence (Sisyphus, after integration)
+
+| Run | Event | Jobs | Result |
+|---|---|---|---|
+| `38212715813` | push | lint/compile/test/build **ok**, smoke **failed**, publish **skipped** | gate held on a real bug |
+| `38213164305` | push | lint/compile/test/build/smoke/publish **all success** | full pipeline green |
+| `38213557262` | pull_request | lint/compile/test/build/smoke **ok**, publish **skipped** | PR never publishes |
+
+- Push digest: `sha256:99ab49d854c336b0379e38d37b0f2fb35e6df27caca2a15239ce886dade018fa`
+  (tagged with the merge SHA); attestation uploaded to the registry in `publish`.
+- Local smoke asserted `/test` = `Hello world from container-d5c1d9c06430` with `X-App-Env: ci-local`;
+  digest re-smoke asserted `X-App-Env: ci-proof` on `3379dab19281`.
+- First failure root cause: the pinned-Trivy tarball was saved as `/tmp/trivy.tar.gz` while the
+  checksums file names `trivy_0.75.0_Linux-64bit.tar.gz` → fixed by keeping the original filename.
+  This is exactly the red→green gate the 6-job split is meant to expose: a broken `smoke` prevents
+  `publish`.
