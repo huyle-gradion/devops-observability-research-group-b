@@ -34,3 +34,5 @@ build
 
 # NOTE: app/ is deliberately NOT ignored — app/go.mod and app/*.go are the build
 # inputs copied by app/Dockerfile.
+
+# (04b PR-gate check: benign comment to exercise the pull_request path)
