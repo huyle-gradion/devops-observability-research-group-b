@@ -1,8 +1,8 @@
 // Command app is the Assignment 3 group B runtime API.
 //
-// It is intentionally stdlib-only: the server exposes the consumer-visible
-// /health and /test contract while keeping startup configuration separate from
-// request data.
+// It exposes the consumer-visible /health and /test contract while keeping
+// startup configuration separate from request data. Prometheus instrumentation
+// is handler-owned (see metrics.go) and never changes a response.
 package main
 
 import (
@@ -65,6 +65,13 @@ func resolveAppEnv() string {
 // environment. Both values are injected explicitly and are never read from the
 // environment per request.
 func newHandler(id, appEnv string) http.Handler {
+	return newHandlerWithMetrics(id, appEnv, newHandlerMetrics())
+}
+
+// newHandlerWithMetrics builds the router around an explicit metrics owner. The
+// serving path uses newHandler, which creates one handlerMetrics per handler;
+// tests may pass their own to inspect the same registry that /metrics serves.
+func newHandlerWithMetrics(id, appEnv string, m *handlerMetrics) http.Handler {
 	mux := http.NewServeMux()
 
 	// "GET" patterns match GET and HEAD. Go's ServeMux therefore answers HEAD
@@ -72,8 +79,13 @@ func newHandler(id, appEnv string) http.Handler {
 	// contract below is proven with explicit GET requests, not that behavior.
 	// Non-GET methods on the same path are rejected by ServeMux with 405 before
 	// the handler runs, so the workload response is never exposed on POST.
+	//
+	// Only GET /test is instrumented with metrics. /health and /metrics stay out
+	// of the workload series, and the middleware skips HEAD so it is never
+	// recorded as GET.
 	mux.HandleFunc("GET /health", handleHealth)
-	mux.HandleFunc("GET /test", handleTest(id, appEnv))
+	mux.Handle("GET /test", m.instrumentTest(handleTest(id, appEnv)))
+	mux.Handle("GET /metrics", m.handler())
 	return mux
 }
 

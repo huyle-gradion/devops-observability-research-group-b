@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -139,4 +140,101 @@ func TestResolveAppEnv(t *testing.T) {
 			t.Errorf("appEnv = %q, want %q", got, "api-proof")
 		}
 	})
+}
+
+// TestWorkloadMetricBoundary proves the emitted series match real traffic: one
+// GET /test success, error and invalid request change only the bounded workload
+// series, while /health and /metrics traffic never creates or inflates them.
+func TestWorkloadMetricBoundary(t *testing.T) {
+	const (
+		testID  = "metrics-test-id"
+		testEnv = "test-env"
+	)
+
+	m := newHandlerMetrics()
+	srv := httptest.NewServer(newHandlerWithMetrics(testID, testEnv, m))
+	defer srv.Close()
+
+	get := func(target string) int {
+		t.Helper()
+		resp, err := srv.Client().Get(srv.URL + target)
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp.StatusCode
+	}
+
+	for _, tc := range []struct {
+		target string
+		want   int
+	}{
+		{"/test", http.StatusOK},
+		{"/test?fail=1", http.StatusInternalServerError},
+		{"/test?delay_ms=1001", http.StatusBadRequest},
+	} {
+		if got := get(tc.target); got != tc.want {
+			t.Fatalf("GET %s = %d, want %d", tc.target, got, tc.want)
+		}
+	}
+
+	// Non-workload traffic that must not touch the workload series.
+	for i := 0; i < 2; i++ {
+		get("/health")
+		get("/metrics")
+	}
+
+	families, err := m.registry.Gather()
+	if err != nil {
+		t.Fatalf("gather registry: %v", err)
+	}
+
+	var (
+		routes         = map[string]bool{}
+		methods        = map[string]bool{}
+		statusCounts   = map[string]float64{}
+		histogramCount uint64
+		bucketBounds   []float64
+	)
+	for _, family := range families {
+		switch family.GetName() {
+		case "http_requests_total":
+			for _, metric := range family.GetMetric() {
+				labels := map[string]string{}
+				for _, pair := range metric.GetLabel() {
+					labels[pair.GetName()] = pair.GetValue()
+				}
+				routes[labels["route"]] = true
+				methods[labels["method"]] = true
+				statusCounts[labels["status"]] += metric.GetCounter().GetValue()
+			}
+		case "http_request_duration_seconds":
+			for _, metric := range family.GetMetric() {
+				histogram := metric.GetHistogram()
+				histogramCount += histogram.GetSampleCount()
+				for _, bucket := range histogram.GetBucket() {
+					bucketBounds = append(bucketBounds, bucket.GetUpperBound())
+				}
+			}
+		}
+	}
+
+	if want := map[string]float64{"200": 1, "400": 1, "500": 1}; !reflect.DeepEqual(statusCounts, want) {
+		t.Errorf("http_requests_total by status = %v, want %v", statusCounts, want)
+	}
+	if len(routes) != 1 || !routes[testRoute] {
+		t.Errorf("route labels = %v, want only %q (health/metrics must not be counted)", routes, testRoute)
+	}
+	if len(methods) != 1 || !methods[http.MethodGet] {
+		t.Errorf("method labels = %v, want only %q", methods, http.MethodGet)
+	}
+	if histogramCount != 3 {
+		t.Errorf("http_request_duration_seconds observed %d requests, want 3", histogramCount)
+	}
+	if want := append([]float64{}, latencyBuckets...); !reflect.DeepEqual(bucketBounds, want) {
+		// The text exposition adds the implicit +Inf bucket; the gathered dto
+		// carries only the declared finite bounds.
+		t.Errorf("latency buckets = %v, want %v", bucketBounds, want)
+	}
 }
