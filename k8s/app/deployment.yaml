@@ -32,7 +32,7 @@ spec:
               app: devops-app
       containers:
         - name: app
-          image: ghcr.io/huyle-gradion/devops-app-huy@sha256:ed622a25dc83fd10c5346eda2d117e3271779a4a4636ca167cc9fc4af0592a86
+          image: ghcr.io/huyle-gradion/devops-app-huy@sha256:7170d644e766f2d239c789409406cc156080d0075e0a1400a5ec9183b6772c04
           ports:
             - name: http
               containerPort: 8080
