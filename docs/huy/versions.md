@@ -62,7 +62,7 @@ actually checked.
 | GitHub Actions pinned revisions | see "GitHub Actions pins" below | per-action release pages | 04 | 2026-10-11 |
 | OTel JS Web SDK package version | pending | pending | 11 | pending |
 | k3s version | pending | pending | 06 | pending |
-| Argo CD or Flux version | pending | pending | 08 | pending |
+| Argo CD or Flux version | Argo CD v3.5.4 (pinned `manifests/install.yaml`) | https://github.com/argoproj/argo-cd/releases/tag/v3.5.4 | 08 (08A) | 2026-10-12 |
 
 Both Stage 03 bases above are multi-platform OCI image indexes that include
 `linux/amd64` and `linux/arm64`; the digests were confirmed live against the
@@ -137,3 +137,32 @@ attestations, so the OCI exporter is used instead.
 |---|---|---|---|
 | Trivy scanner (pinned download in `smoke`) | `0.75.0` (`trivy_0.75.0_Linux-64bit.tar.gz`, checksum-verified) | 04b | 2026-10-12 |
 | Trivy vulnerability DB snapshot (local check) | `UpdatedAt 2026-10-12 01:14:57 UTC` | 04b | 2026-10-12 |
+
+## GitOps digest proposal — Stage 08B (2026-10-12)
+
+Substep 08B adds one job, `propose-deploy`, to `.github/workflows/ci.yml`. It runs
+only after a fully green trusted push and proposes a reviewed digest PR against
+`env/huy`. It adds **no new GitHub Action**: every step is a plain `run:` shell
+step, so the five action pins already recorded for Stages 04/05/04b are unchanged
+and are not repeated here.
+
+### Pinned tool added by 08B
+
+`propose-deploy` installs a pinned `kubectl` and uses it only for a local,
+server-free manifest edit (`kubectl set image --local -f ... -o yaml`):
+
+| Item | Value | Source URL | Producing stage | Checked date |
+|---|---|---|---|---|
+| `kubectl` version | `v1.37.1` | https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl | 08B | 2026-10-12 |
+| `kubectl` linux/amd64 sha256 | `65691ff77eb6fa44c908b77a1082c9f092c3b9733b5cefabec0d1104890e21a8` | https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl.sha256 | 08B | 2026-10-12 |
+
+The pin matches the cluster server minor: k3s `v1.37.1+k3s1`
+([`cluster-runbook.md`](cluster-runbook.md)). The checksum was confirmed live on
+2026-10-12 by fetching the official `.sha256` over the public HTTPS release path
+(no credential) and by comparing the workstation client binary, which hashed to
+the same value. The workflow verifies the download against `kubectl.sha256`
+before installing.
+
+Confirmation requested before push, as for the Stage 04/05/04b pins: the
+`propose-deploy` job installs only this one new third-party binary and adds no
+`uses:` line, so no action commit SHA needs re-resolution for 08B.
