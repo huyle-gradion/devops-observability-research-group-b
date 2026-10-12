@@ -12,6 +12,8 @@ spec:
       app: devops-app
   template:
     metadata:
+      annotations:
+        config-revision: "20261012T170926Z"
       labels:
         app: devops-app
     spec:
