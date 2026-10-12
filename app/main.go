@@ -6,12 +6,16 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"runtime"
 	"strconv"
+	"syscall"
 	"time"
 )
 
@@ -20,24 +24,80 @@ const (
 	defaultAppEnv = "local"
 	maxDelayMs    = 1000
 
+	// serverShutdownTimeout bounds draining in-flight requests so a slow client
+	// cannot hang termination.
+	serverShutdownTimeout = 5 * time.Second
+
+	// telemetryShutdownTimeout bounds the final span flush so an unreachable or
+	// slow Collector cannot hang termination.
+	telemetryShutdownTimeout = 5 * time.Second
+
 	healthBody  = "ok\n"
 	invalidBody = "invalid test parameters\n"
 	failBody    = "intentional test failure\n"
 )
 
 func main() {
+	os.Exit(run())
+}
+
+// run wires telemetry and the HTTP server and returns the process exit code. On
+// a stop signal it drains the server first so in-flight spans are complete and
+// then flushes the tracer provider with a bounded context. The flush happens
+// explicitly before run returns (and before os.Exit), so a deferred shutdown can
+// never sit behind os.Exit and silently drop spans.
+func run() int {
 	id, err := resolveRuntimeID()
 	if err != nil {
 		slog.Error("failed to resolve runtime identity", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	appEnv := resolveAppEnv()
 	slog.Info("runtime API starting", "runtime_id", id, "app_env", appEnv, "addr", listenAddr, "pid", os.Getpid(), "arch", runtime.GOARCH)
 
-	if err := http.ListenAndServe(listenAddr, newHandler(id, appEnv)); err != nil {
-		slog.Error("http server stopped", "error", err)
-		os.Exit(1)
+	shutdownTelemetry, err := initTelemetry(context.Background(), id)
+	if err != nil {
+		slog.Error("failed to initialize telemetry", "error", err)
+		return 1
 	}
+
+	srv := &http.Server{Addr: listenAddr, Handler: newHandler(id, appEnv)}
+
+	serveErr := make(chan error, 1)
+	go func() { serveErr <- srv.ListenAndServe() }()
+
+	stopCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	exitCode := 0
+	select {
+	case err := <-serveErr:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Error("http server stopped", "error", err)
+			exitCode = 1
+		}
+	case <-stopCtx.Done():
+		slog.Info("stop signal received")
+	}
+
+	// Drain in-flight requests before flushing so their spans are complete.
+	httpCtx, cancelHTTP := context.WithTimeout(context.Background(), serverShutdownTimeout)
+	defer cancelHTTP()
+	if err := srv.Shutdown(httpCtx); err != nil {
+		slog.Error("http server shutdown failed", "error", err)
+	}
+
+	// Flush and stop the tracer provider. Shutdown and export errors are
+	// surfaced honestly on stderr but do not by themselves turn a normal stop
+	// into a process failure; export errors are expected when no Collector is
+	// reachable (local/CI smoke). Only a genuine serve failure sets exitCode.
+	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
+	defer cancelTelemetry()
+	if err := shutdownTelemetry(telemetryCtx); err != nil {
+		slog.Error("telemetry shutdown failed", "error", err)
+	}
+
+	return exitCode
 }
 
 // resolveRuntimeID resolves the runtime identity once: a nonempty POD_NAME

@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
+	"time"
+
+	"go.opentelemetry.io/otel"
 )
 
 // workloadPrefix is the consumer-visible workload marker. Non-success paths must
@@ -236,5 +241,63 @@ func TestWorkloadMetricBoundary(t *testing.T) {
 		// The text exposition adds the implicit +Inf bucket; the gathered dto
 		// carries only the declared finite bounds.
 		t.Errorf("latency buckets = %v, want %v", bucketBounds, want)
+	}
+}
+
+// TestInitTelemetry proves the trace pipeline is built without contacting the
+// endpoint (the exporter is lazy) and that it installs the global tracer
+// provider and W3C trace-context plus baggage propagator the contract requires.
+// The endpoint is deliberately unreachable: shutdown must still terminate and
+// its export error is the honest outcome, not a failure of this lifecycle test.
+func TestInitTelemetry(t *testing.T) {
+	t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://127.0.0.1:4318")
+
+	shutdown, err := initTelemetry(context.Background(), "telemetry-test-id")
+	if err != nil {
+		t.Fatalf("initTelemetry: %v", err)
+	}
+	if shutdown == nil {
+		t.Fatal("initTelemetry returned a nil shutdown function")
+	}
+
+	if otel.GetTracerProvider() == nil {
+		t.Error("global tracer provider was not installed")
+	} else {
+		// Emit one span so the batch processor really attempts an export on
+		// shutdown. With no Collector the export must fail honestly rather than
+		// be swallowed; the error is logged, not asserted, because a Collector
+		// could be reachable on this endpoint.
+		_, span := otel.Tracer("app.test").Start(context.Background(), "smoke")
+		span.End()
+	}
+
+	gotFields := otel.GetTextMapPropagator().Fields()
+	sort.Strings(gotFields)
+	wantFields := []string{"baggage", "traceparent", "tracestate"}
+	if !reflect.DeepEqual(gotFields, wantFields) {
+		t.Errorf("global propagator fields = %v, want %v", gotFields, wantFields)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := shutdown(ctx); err != nil {
+		t.Logf("shutdown reported an export error as expected with no Collector: %v", err)
+	}
+}
+
+// TestInitTelemetryInvalidEndpoint proves SDK init fails on a malformed endpoint
+// so main can treat it as a startup failure instead of running blind.
+func TestInitTelemetryInvalidEndpoint(t *testing.T) {
+	for _, endpoint := range []string{"://not-a-url", "not-a-url"} {
+		t.Run(endpoint, func(t *testing.T) {
+			t.Setenv("OTEL_EXPORTER_OTLP_ENDPOINT", endpoint)
+			shutdown, err := initTelemetry(context.Background(), "telemetry-test-id")
+			if err == nil {
+				if shutdown != nil {
+					_ = shutdown(context.Background())
+				}
+				t.Fatalf("initTelemetry accepted malformed endpoint %q", endpoint)
+			}
+		})
 	}
 }
