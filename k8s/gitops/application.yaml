@@ -1,0 +1,16 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: devops-app-huy
+  namespace: argocd
+spec:
+  project: huy
+  source:
+    repoURL: https://github.com/huyle-gradion/devops-observability-research-group-b.git
+    targetRevision: env/huy
+    path: k8s/app
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: devops-app
+  # Manual sync initially: adopt the existing manual objects; no automated block yet.
+  syncPolicy: {}

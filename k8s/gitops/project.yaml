@@ -1,0 +1,18 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: huy
+  namespace: argocd
+spec:
+  description: Personal project (huyle-gradion) — app desired state only.
+  sourceRepos:
+    - https://github.com/huyle-gradion/devops-observability-research-group-b.git
+  destinations:
+    - server: https://kubernetes.default.svc
+      namespace: devops-app
+  # No cluster-scoped resources are permitted; the namespace is bootstrapped from
+  # the source branch, not managed by this Application.
+  clusterResourceWhitelist: []
+  namespaceResourceWhitelist:
+    - group: "*"
+      kind: "*"

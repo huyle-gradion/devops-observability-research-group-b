@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: devops-app
+  labels:
+    app: devops-app
+    # Bootstrapped from the source branch; the Argo CD Application manages only
+    # k8s/app (ConfigMap/Deployment/Service), never this Namespace.
