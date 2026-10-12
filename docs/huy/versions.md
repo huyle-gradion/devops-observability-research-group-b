@@ -111,3 +111,29 @@ internally.)
 The v4.2.2 commit SHA above was independently confirmed live on 2026-10-11 via an
 anonymous public `GET /repos/actions/attest-build-provenance/commits/v4.2.2`
 (returned `4d101475d8b20a2381f78447822ac1eab6504dd8`, a validly-signed release commit).
+
+## GitHub Actions pins (Stage 04b — six-job refactor, 2026-10-12)
+
+The six-job `.github/workflows/ci.yml` (`lint -> compile -> test -> build -> smoke -> publish`)
+uses the same five pinned actions as Stages 04/05; no new action was added. The Stage 04 note
+above asked Sisyphus to confirm each release commit before push. That confirmation was made
+live on **2026-10-12** with anonymous `GET /repos/<owner>/<repo>/commits/<tag>` (no credential),
+and every tag resolved to the pinned commit:
+
+| Action | Version | Commit SHA | Anonymous verification |
+|---|---|---|---|
+| `actions/setup-go` | v7.0.0 | `b7ad1dad31e06c5925ef5d2fc7ad053ef454303e` | `commits/v7.0.0` → same SHA |
+| `docker/setup-buildx-action` | v4.4.1 | `f87e5991a6d7451dcb8d9637bfbc97413f497069` | `commits/v4.4.1` → same SHA |
+| `docker/login-action` | v4.6.0 | `dbcb813823bdd20940b903addbd779551569679f` | `commits/v4.6.0` → same SHA |
+| `docker/build-push-action` | v7.4.0 | `c3c9e263c25d99ce0380d002d59b67737d91b0dc` | `commits/v7.4.0` → same SHA |
+| `actions/attest-build-provenance` | v4.2.2 | `4d101475d8b20a2381f78447822ac1eab6504dd8` | `commits/v4.2.2` → same SHA |
+
+`actions/checkout` is still not referenced: every job uses plain anonymous Git. The build job
+adds `sbom: true` and `provenance: mode=max` on `docker/build-push-action` with an
+`outputs: type=oci,dest=...` archive (no push, no login); the local `--load` path cannot carry
+attestations, so the OCI exporter is used instead.
+
+| Item | Value | Producing stage | Checked date |
+|---|---|---|---|
+| Trivy scanner (pinned download in `smoke`) | `0.75.0` (`trivy_0.75.0_Linux-64bit.tar.gz`, checksum-verified) | 04b | 2026-10-12 |
+| Trivy vulnerability DB snapshot (local check) | `UpdatedAt 2026-10-12 01:14:57 UTC` | 04b | 2026-10-12 |
