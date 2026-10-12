@@ -14,11 +14,12 @@
       </p>
       <p>
         <small>
-          Experimental: this page uses the OpenTelemetry browser Web SDK
+          EXPERIMENTAL: this page uses the OpenTelemetry browser Web SDK
           (document-load, fetch and XHR instrumentations) to export one trace to
-          the private Collector through a same-origin proxy. Browser
-          instrumentation is pre-stable, and a controlled session like this is
-          not a production real-user-monitoring cohort.
+          the private Collector through a same-origin proxy, and the
+          <code>web-vitals</code> library to measure the page's own Core Web
+          Vitals. Browser instrumentation is pre-stable, and a controlled
+          session like this is not a production real-user-monitoring cohort.
         </small>
       </p>
 
@@ -35,8 +36,57 @@
       </section>
 
       <section>
-        <h2>Web Vital</h2>
+        <h2>Web Vital (experimental, controlled demo)</h2>
         <pre id="web-vital">not measured yet</pre>
+        <p>
+          <small>
+            Real values reported by <code>web-vitals</code> for this page load:
+            <strong>LCP</strong> and <strong>INP</strong> are millisecond
+            durations; <strong>CLS</strong> is a unitless layout-shift score.
+            Each metric shows its measurement id, the page URL, the browser
+            context and the capture time, and is also printed to the console.
+            A <strong>CLS of 0</strong> is a real measured value for a load with
+            no layout shift, not a placeholder. This is a single controlled
+            session &mdash; not a production RUM cohort and not a CrUX
+            population statistic.
+          </small>
+        </p>
+      </section>
+
+      <section>
+        <h2>Server-Timing (/test)</h2>
+        <pre id="server-timing">not requested yet</pre>
+      </section>
+
+      <section>
+        <h2>How this is measured (experimental)</h2>
+        <p>
+          <small>
+            <strong>Navigation Timing</strong> exposes one
+            <code>PerformanceNavigationTiming</code> entry for this document
+            load. <strong>Resource Timing</strong> exposes a
+            <code>PerformanceResourceTiming</code> entry per fetched resource;
+            the same-origin <code>/test</code> response's
+            <code>Server-Timing</code> header is visible in the DevTools Network
+            panel (Timing tab) and is read back here as
+            <code>PerformanceResourceTiming.serverTiming</code>. A
+            <strong>PerformanceObserver</strong> pushes largest-contentful-paint,
+            layout-shift and event-timing entries as they occur, which
+            <code>web-vitals</code> turns into a real value with a unit and a
+            measurement id.
+          </small>
+        </p>
+        <p>
+          <small>
+            <strong>Lab vs field:</strong> the DevTools Performance panel and
+            Trace Viewer replay one reproducible session (lab), whereas
+            real-user monitoring aggregates many real users' sessions (field).
+            <strong>CrUX</strong> is aggregated field data over many real users
+            behind a public origin. This page is one controlled local demo
+            session, so it is neither a production RUM cohort nor a CrUX
+            population statistic.
+          </small>
+        </p>
       </section>
     </main>
 

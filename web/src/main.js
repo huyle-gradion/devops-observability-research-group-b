@@ -40,6 +40,7 @@ import { registerInstrumentations } from "@opentelemetry/instrumentation";
 import { DocumentLoadInstrumentation } from "@opentelemetry/instrumentation-document-load";
 import { FetchInstrumentation } from "@opentelemetry/instrumentation-fetch";
 import { XMLHttpRequestInstrumentation } from "@opentelemetry/instrumentation-xml-http-request";
+import { onCLS, onINP, onLCP } from "web-vitals";
 
 (function () {
   "use strict";
@@ -90,6 +91,125 @@ import { XMLHttpRequestInstrumentation } from "@opentelemetry/instrumentation-xm
     }
   }
 
+  // ---------------------------------------------------------------------------
+  // 11D: real Core Web Vitals from THIS page (EXPERIMENTAL, controlled demo)
+  //
+  // Where the numbers come from:
+  //   * Navigation Timing  -> one PerformanceNavigationTiming entry describes
+  //     this document load (start, DOMContentLoaded, load).
+  //   * Resource Timing    -> a PerformanceResourceTiming entry per fetched
+  //     resource. The same-origin /test response sets a Server-Timing header,
+  //     which is visible in DevTools Network (Timing tab) and readable here as
+  //     PerformanceResourceTiming.serverTiming (see reportServerTiming below).
+  //   * PerformanceObserver-> the browser pushes largest-contentful-paint,
+  //     layout-shift and event-timing entries as they happen; web-vitals
+  //     subscribes to them and calls these callbacks with the REAL value and a
+  //     measurement id. Nothing below is invented or copied from another site.
+  //
+  // Lab vs field: the DevTools Performance panel and Trace Viewer replay one
+  // reproducible session (lab). Real-user monitoring aggregates many real
+  // users' sessions (field). This page is a single controlled local/lab demo.
+  //
+  // EXPERIMENTAL / limits: web-vitals 6.2.3 and the underlying browser
+  // PerformanceObserver APIs are pre-stable and vary by browser. This is a
+  // controlled single-session demo, NOT a production RUM cohort, and it is NOT
+  // a CrUX statistic (CrUX is aggregated field data over many real users behind
+  // a public origin). A CLS of 0 is a real measured value for a load with no
+  // layout shift, not a placeholder.
+  //
+  // Units: LCP and INP are DOMHighResTimeStamp millisecond durations; CLS is a
+  // unitless layout-shift score.
+  var VITAL_UNITS = { LCP: "ms", INP: "ms", CLS: "score (unitless)" };
+  var VITAL_ORDER = ["LCP", "INP", "CLS"];
+  var vitalState = {};
+
+  function browserContext() {
+    var ua = (navigator && navigator.userAgent) || "unknown user agent";
+    return ua + " | controlled local demo, not field RUM, not CrUX";
+  }
+
+  function captureTime() {
+    return new Date().toISOString();
+  }
+
+  // Called by web-vitals with the real metric object. Displays AND logs the
+  // real name, value, measurement id, unit, page URL, context and capture time.
+  function reportVital(metric) {
+    var unit = VITAL_UNITS[metric.name] || "unit";
+    var record = {
+      name: metric.name,
+      value: metric.value,
+      unit: unit,
+      id: metric.id,
+      rating: metric.rating,
+      url: window.location.href,
+      context: browserContext(),
+      capturedAt: captureTime(),
+    };
+    vitalState[metric.name] = record;
+    if (window.console && window.console.log) {
+      window.console.log(
+        "[web-vitals] " + record.name + " = " + record.value + " " + unit,
+        record
+      );
+    }
+    renderVitals();
+  }
+
+  function renderVitals() {
+    var el = byId("web-vital");
+    if (!el) {
+      return;
+    }
+    var blocks = [];
+    for (var i = 0; i < VITAL_ORDER.length; i++) {
+      var name = VITAL_ORDER[i];
+      var m = vitalState[name];
+      if (!m) {
+        blocks.push(name + ": no real report yet (waiting for the browser)");
+        continue;
+      }
+      blocks.push(
+        m.name + ": " + m.value + " " + m.unit + " (rating: " + m.rating + ")\n" +
+          "  id: " + m.id + "\n" +
+          "  url: " + m.url + "\n" +
+          "  context: " + m.context + "\n" +
+          "  captured: " + m.capturedAt
+      );
+    }
+    el.textContent = blocks.join("\n\n");
+  }
+
+  // Reads the same-origin /test Server-Timing header back through Resource
+  // Timing. Same-origin, so serverTiming is exposed (no Timing-Allow-Origin
+  // needed). Never fabricates a value: if the entry/header is absent it says so.
+  function reportServerTiming(requestUrl) {
+    var note = "no PerformanceResourceTiming entry yet for " + requestUrl +
+      " (see DevTools Network > Timing).";
+    if (window.performance && performance.getEntriesByName) {
+      var entries = performance.getEntriesByName(requestUrl, "resource");
+      if (entries.length) {
+        var entry = entries[entries.length - 1];
+        var serverTiming = entry.serverTiming;
+        if (serverTiming && serverTiming.length) {
+          var parts = [];
+          for (var i = 0; i < serverTiming.length; i++) {
+            parts.push(serverTiming[i].name + " dur=" + serverTiming[i].duration + "ms");
+          }
+          note = "PerformanceResourceTiming.serverTiming (" + requestUrl + "): " +
+            parts.join(", ");
+        } else {
+          note = "PerformanceResourceTiming for " + requestUrl +
+            " has no Server-Timing entry (see DevTools Network).";
+        }
+      }
+    }
+    setText("server-timing", note);
+    if (window.console && window.console.log) {
+      window.console.log("[Server-Timing] " + note);
+    }
+  }
+
   // One click -> one active `test-click` span wrapping one real request. The
   // reported status/trace-id come only from the actual response; the span is
   // ended on both success and error, then the provider is flushed.
@@ -121,6 +241,12 @@ import { XMLHttpRequestInstrumentation } from "@opentelemetry/instrumentation-xm
           // Success is shown only after the real response body has arrived.
           setText("response", result.status + " " + result.body);
           setText("trace-id", traceId);
+          // The Resource Timing entry for /test is finalized with the response,
+          // so read it just after this task settles (clearer than racing the
+          // promise microtasks).
+          window.setTimeout(function () {
+            reportServerTiming(new URL(TEST_URL, window.location.href).href);
+          }, 0);
           if (result.status >= 400) {
             span.setStatus({
               code: SpanStatusCode.ERROR,
@@ -155,11 +281,23 @@ import { XMLHttpRequestInstrumentation } from "@opentelemetry/instrumentation-xm
     });
   }
 
+  // Registers all three real Core Web Vitals with reportAllChanges so the page
+  // shows/logs every real update (including a genuine CLS of 0). LCP and INP
+  // are millisecond durations; CLS is a unitless score.
+  function registerWebVitals() {
+    var options = { reportAllChanges: true };
+    onLCP(reportVital, options);
+    onINP(reportVital, options);
+    onCLS(reportVital, options);
+  }
+
   function init() {
     var button = byId("run-test");
     if (button) {
       button.addEventListener("click", runTest);
     }
+    renderVitals();
+    registerWebVitals();
   }
 
   if (document.readyState === "loading") {
