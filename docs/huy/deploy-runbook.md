@@ -186,3 +186,114 @@ automatically by Kubernetes) is what the release's Prometheus uses in
 `serviceMonitorNamespaceSelector`; the ServiceMonitor carries `release: huy-monitoring`
 to match `serviceMonitorSelector`. A wrong label on either side yields no targets
 silently, so verify the target is actually `Up` rather than assuming discovery worked.
+
+## 9. Workload dashboard and persistence proof (Stage 09C)
+
+The dashboard source of truth is committed at [`dashboards/huy-workload.json`](../../dashboards/huy-workload.json).
+It has five panels — request rate, error ratio (`percentunit`), p95 latency (`seconds`),
+per-pod CPU (`cores`) and per-pod memory (`bytes`) — a **5s refresh**, and it reads the
+Prometheus datasource through a `${datasource}` template variable, so **no other
+instance's datasource UID is baked in**. The two resource panels come from
+kubelet/cAdvisor and are keyed by pod; the three request panels come from the app's own
+`/metrics` registry (`http_requests_total`, `http_request_duration_seconds`) for
+`GET /test` in namespace `devops-app`.
+
+### 9.1 Import and save it in Grafana
+
+Forward the Grafana UI (the Service name comes from this release — read it first, do not
+assume) and import the committed JSON:
+
+```sh
+export KUBECONFIG="$HOME/.kube/huy-k3s.yaml"
+kubectl -n monitoring get svc                       # read the actual Grafana Service name
+kubectl -n monitoring port-forward svc/huy-monitoring-grafana 3000:80
+```
+
+In the browser at <http://127.0.0.1:3000>:
+
+1. **Dashboards → New → Import**.
+2. Upload `dashboards/huy-workload.json` (or paste its contents).
+3. When prompted, pick the **Prometheus datasource of the `huy-monitoring` release**
+   for the `datasource` variable. That selection is what the panels use — the JSON
+   itself carries no foreign UID, so importing on your instance binds to *your*
+   Prometheus, not someone else's.
+4. **Save**, and put it in a folder you own (for example a `huy` folder).
+
+Saving here is deliberate: it is the object the persistence proof below must survive.
+
+### 9.2 Send real traffic first, then wait
+
+Panels will be empty or flat until the app actually serves workload. Drive real
+requests through the app (from step 6's forward, or per-pod forwards), then be patient:
+
+```sh
+# success + invalid + intentional failure + added latency
+for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:8080/test; done
+for i in $(seq 1 10); do curl -s -o /dev/null "http://127.0.0.1:8080/test?fail=1"; done
+for i in $(seq 1 5);  do curl -s -o /dev/null "http://127.0.0.1:8080/test?delay_ms=1001"; done
+for i in $(seq 1 10); do curl -s -o /dev/null "http://127.0.0.1:8080/test?delay_ms=300"; done
+```
+
+The ServiceMonitor scrapes every **15s** and every panel rates over a **1m** window, so
+wait for **multiple 15s scrapes plus a full 1m rate window** after the traffic before
+deciding whether a panel is correct. An empty result in that first minute is waiting
+time, not a broken dashboard — and it is never a reason to fabricate a value or to
+suppress a panel.
+
+With only one Service forward, only one replica receives traffic; the port-forward picks
+one backing pod. To prove both resource panels, drive each pod directly (step 6's
+per-pod forwards) or send enough load that both replicas are involved, then compare the
+two pods in the legend.
+
+### 9.3 Persistence proof — delete own pods, keep PVCs and StatefulSets
+
+The point is that a **saved** dashboard and **stored** history survive pod replacement
+because Grafana and Prometheus persist to their own PVCs. The proof deletes exactly
+**one** running pod of each and waits for the chart to replace it. It **never** deletes
+a PVC, a PersistentVolume, or a StatefulSet, and never scales anything down — those
+would manufacture success and can destroy the data being proven.
+
+List the pods and read the exact names first:
+
+```sh
+kubectl -n monitoring get pods
+```
+
+**Grafana first.** Delete one observed Grafana pod by name, wait for the replacement to
+be `Ready`, then reopen the dashboard you saved in 9.1:
+
+```sh
+kubectl -n monitoring delete pod <one-huy-monitoring-grafana-pod>
+kubectl -n monitoring get pods -w        # Ctrl-C once the replacement is Running/Ready
+```
+
+The saved dashboard must still be there, in its folder, with its five panels — proof it
+lived in Grafana's PVC, not in the old pod's memory.
+
+**Then Prometheus.** Delete one observed Prometheus pod by name; note the current time
+window before you do, so you can compare the same range afterwards:
+
+```sh
+kubectl -n monitoring get pods                     # find the Prometheus pod
+kubectl -n monitoring delete pod <the-prometheus-pod>
+kubectl -n monitoring get pods -w                  # wait for Running/Ready
+```
+
+After it returns, reload the dashboard over the **same time range you looked at before**
+the deletion. Earlier request/error/latency history must still render — proof the
+time-series came from Prometheus's PVC (`retention: 24h`), not from the pod it just
+lost.
+
+**What a failure looks like, honestly:** if the Prometheus PVC or the Grafana PVC were
+never `Bound`, the StatefulSets would not have started; if history is missing only
+*before* the restart but present after, that is a retention/storage issue to diagnose
+with `kubectl -n monitoring describe pvc` and events — not a dashboard problem to paper
+over. Do not delete PVCs or StatefulSets to force a green result. The `local-path` `RWO`
+volumes are node-bound, not replicated or HA: a replacement pod only keeps its data while
+its node and volume survive.
+
+### 9.4 Unrun here
+
+This worker authored the JSON and these steps but has **no cluster access**, so the
+import, save, live panel observation and the pod-deletion persistence proof were **not**
+run here. Sisyphus/owner performs them and captures the evidence.
