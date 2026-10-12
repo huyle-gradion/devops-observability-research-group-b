@@ -8,11 +8,15 @@ import (
 	"os"
 	"reflect"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 )
 
 // workloadPrefix is the consumer-visible workload marker. Non-success paths must
@@ -300,4 +304,161 @@ func TestInitTelemetryInvalidEndpoint(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestServerTimingHeader proves the measured Server-Timing header is present on
+// every /test response and reflects real handling: a delayed request measures at
+// least its delay, while a rejected request whose selected delay would be large
+// reports a small duration instead of faking the delay it never ran.
+func TestServerTimingHeader(t *testing.T) {
+	const (
+		testID  = "timing-test-id"
+		testEnv = "test-env"
+	)
+
+	srv := httptest.NewServer(newHandler(testID, testEnv))
+	defer srv.Close()
+
+	get := func(target string) *http.Response {
+		t.Helper()
+		resp, err := srv.Client().Get(srv.URL + target)
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		return resp
+	}
+
+	t.Run("delay is measured", func(t *testing.T) {
+		resp := get("/test?delay_ms=120")
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		}
+		if got := serverTimingMillis(t, resp); got < 120 {
+			t.Errorf("Server-Timing dur = %d, want >= 120 (the real delay)", got)
+		}
+	})
+
+	t.Run("rejected request does not fake the selected delay", func(t *testing.T) {
+		resp := get("/test?delay_ms=1001")
+		if resp.StatusCode != http.StatusBadRequest {
+			t.Fatalf("status = %d, want 400", resp.StatusCode)
+		}
+		if got := serverTimingMillis(t, resp); got >= 1000 {
+			t.Errorf("Server-Timing dur = %d, want < 1000: a rejected request must not run the selected delay", got)
+		}
+	})
+
+	t.Run("failure is still measured", func(t *testing.T) {
+		resp := get("/test?fail=1")
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("status = %d, want 500", resp.StatusCode)
+		}
+		_ = serverTimingMillis(t, resp)
+		if env := resp.Header.Get("X-App-Env"); env != "" {
+			t.Errorf("X-App-Env = %q, want absent on error", env)
+		}
+	})
+}
+
+// serverTimingMillis parses the app duration from the Server-Timing header,
+// failing the test when the header is missing or malformed.
+func serverTimingMillis(t *testing.T, resp *http.Response) int64 {
+	t.Helper()
+	const prefix = "app;dur="
+	value := resp.Header.Get("Server-Timing")
+	if !strings.HasPrefix(value, prefix) {
+		t.Fatalf("Server-Timing = %q, want prefix %q", value, prefix)
+	}
+	ms, err := strconv.ParseInt(strings.TrimPrefix(value, prefix), 10, 64)
+	if err != nil {
+		t.Fatalf("Server-Timing duration %q: %v", value, err)
+	}
+	return ms
+}
+
+// TestTestRouteSpans proves /test runs inside the otelhttp server span, creates
+// the test-work child span under it, honors an upstream W3C traceparent, and
+// creates no spans for /health or the /metrics scrape.
+func TestTestRouteSpans(t *testing.T) {
+	const (
+		testID  = "spans-test-id"
+		testEnv = "test-env"
+		// Canonical W3C trace-context example values.
+		incomingTraceID = "0af7651916cd43dd8448eb211c80319c"
+		incomingSpanID  = "b7ad6b7169203331"
+	)
+
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	prevProvider := otel.GetTracerProvider()
+	prevPropagator := otel.GetTextMapPropagator()
+	otel.SetTracerProvider(provider)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+	t.Cleanup(func() {
+		otel.SetTracerProvider(prevProvider)
+		otel.SetTextMapPropagator(prevPropagator)
+		_ = provider.Shutdown(context.Background())
+	})
+
+	srv := httptest.NewServer(newHandler(testID, testEnv))
+	defer srv.Close()
+
+	do := func(target, traceparent string) {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodGet, srv.URL+target, nil)
+		if err != nil {
+			t.Fatalf("new request: %v", err)
+		}
+		if traceparent != "" {
+			req.Header.Set("traceparent", traceparent)
+		}
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatalf("GET %s: %v", target, err)
+		}
+		defer resp.Body.Close()
+		_, _ = io.Copy(io.Discard, resp.Body)
+	}
+
+	do("/test?delay_ms=5", "00-"+incomingTraceID+"-"+incomingSpanID+"-01")
+	do("/health", "")
+	do("/metrics", "")
+
+	ended := recorder.Ended()
+	if len(ended) != 2 {
+		t.Fatalf("ended spans = %d, want 2 (server + test-work): only /test may be traced", len(ended))
+	}
+
+	server := findSpan(t, ended, testHandlerSpanName)
+	work := findSpan(t, ended, testWorkSpanName)
+
+	if got := server.SpanContext().TraceID().String(); got != incomingTraceID {
+		t.Errorf("server trace_id = %s, want upstream %s", got, incomingTraceID)
+	}
+	if parent := server.Parent(); !parent.IsRemote() || parent.SpanID().String() != incomingSpanID {
+		t.Errorf("server parent span_id = %s (remote %t), want remote upstream %s", parent.SpanID(), parent.IsRemote(), incomingSpanID)
+	}
+	if work.Parent().SpanID() != server.SpanContext().SpanID() {
+		t.Errorf("test-work parent span_id = %s, want server %s", work.Parent().SpanID(), server.SpanContext().SpanID())
+	}
+	if work.SpanContext().TraceID() != server.SpanContext().TraceID() {
+		t.Errorf("test-work trace_id = %s, want server %s", work.SpanContext().TraceID(), server.SpanContext().TraceID())
+	}
+}
+
+// findSpan returns the single ended span with the given name, failing otherwise.
+func findSpan(t *testing.T, spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	t.Helper()
+	for _, span := range spans {
+		if span.Name() == name {
+			return span
+		}
+	}
+	t.Fatalf("span %q not found among %d ended spans", name, len(spans))
+	return nil
 }

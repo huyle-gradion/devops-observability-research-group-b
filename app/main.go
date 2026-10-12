@@ -17,6 +17,12 @@ import (
 	"strconv"
 	"syscall"
 	"time"
+
+	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const (
@@ -35,6 +41,14 @@ const (
 	healthBody  = "ok\n"
 	invalidBody = "invalid test parameters\n"
 	failBody    = "intentional test failure\n"
+
+	// testHandlerSpanName is the otelhttp server span for the wrapped /test
+	// route. Its span context is what the inner workload logs, so the logged
+	// span_id matches the server span a viewer shows for the request.
+	testHandlerSpanName = "GET /test"
+
+	// testWorkSpanName is the child span around the real selected delay/work.
+	testWorkSpanName = "test-work"
 )
 
 func main() {
@@ -47,6 +61,10 @@ func main() {
 // explicitly before run returns (and before os.Exit), so a deferred shutdown can
 // never sit behind os.Exit and silently drop spans.
 func run() int {
+	// Structured logs are JSON on stdout so the platform can parse them and
+	// OTel-context correlation fields (trace_id/span_id) are machine-readable.
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
 	id, err := resolveRuntimeID()
 	if err != nil {
 		slog.Error("failed to resolve runtime identity", "error", err)
@@ -88,9 +106,10 @@ func run() int {
 	}
 
 	// Flush and stop the tracer provider. Shutdown and export errors are
-	// surfaced honestly on stderr but do not by themselves turn a normal stop
-	// into a process failure; export errors are expected when no Collector is
-	// reachable (local/CI smoke). Only a genuine serve failure sets exitCode.
+	// surfaced honestly on the structured log stream but do not by themselves
+	// turn a normal stop into a process failure; export errors are expected when
+	// no Collector is reachable (local/CI smoke). Only a genuine serve failure
+	// sets exitCode.
 	telemetryCtx, cancelTelemetry := context.WithTimeout(context.Background(), telemetryShutdownTimeout)
 	defer cancelTelemetry()
 	if err := shutdownTelemetry(telemetryCtx); err != nil {
@@ -143,58 +162,115 @@ func newHandlerWithMetrics(id, appEnv string, m *handlerMetrics) http.Handler {
 	// Only GET /test is instrumented with metrics. /health and /metrics stay out
 	// of the workload series, and the middleware skips HEAD so it is never
 	// recorded as GET.
+	//
+	// otelhttp wraps only /test, outermost so the metrics middleware and the
+	// workload handler both see the server span's request context. /health, the
+	// /metrics scrape and the exporter's own traffic therefore create no
+	// workload span. An upstream W3C traceparent is honored through the global
+	// propagator, which is how the browser stage joins its trace.
 	mux.HandleFunc("GET /health", handleHealth)
-	mux.Handle("GET /test", m.instrumentTest(handleTest(id, appEnv)))
+	mux.Handle("GET /test", otelhttp.NewHandler(m.instrumentTest(handleTest(id, appEnv)), testHandlerSpanName))
 	mux.Handle("GET /metrics", m.handler())
 	return mux
+}
+
+// tracer resolves a tracer from the process-global provider at call time. It is
+// deliberately not cached in a package variable: the provider is installed by
+// initTelemetry (or a test) after package initialization, and a tracer captured
+// earlier would bind the no-op provider and silently drop every span.
+func tracer() trace.Tracer {
+	return otel.Tracer(serviceName)
 }
 
 func handleHealth(w http.ResponseWriter, _ *http.Request) {
 	writeText(w, http.StatusOK, healthBody)
 }
 
+// handleTest serves the bounded workload contract inside the otelhttp server
+// span created by the wrapper, so r.Context() carries that span's context.
+//
+// Correlation: trace_id/span_id are read from the server span context already
+// on r.Context() before the child span starts, so the logged span_id matches the
+// server span a viewer shows for the request. The child test-work span wraps the
+// real selected delay/work and is ended on every path by defer.
+//
+// Timing: Server-Timing and every other response header are set before the
+// single writeText, because a header change after WriteHeader is never sent. The
+// measured duration covers real handling only, so a rejected request does not
+// report the delay it never ran.
 func handleTest(id, appEnv string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		query := r.URL.Query()
+		serverCtx := trace.SpanContextFromContext(r.Context())
 
-		delayMs := 0
-		if query.Has("delay_ms") {
-			// ParseUint rejects signs, whitespace, fractions and an explicitly
-			// empty value; the range check rejects values above the bound.
-			n, err := strconv.ParseUint(query.Get("delay_ms"), 10, 64)
-			if err != nil || n > maxDelayMs {
-				writeText(w, http.StatusBadRequest, invalidBody)
-				return
-			}
-			delayMs = int(n)
+		_, span := tracer().Start(r.Context(), testWorkSpanName)
+		defer span.End()
+
+		start := time.Now()
+		status, body, env := testResponse(r, id, appEnv)
+		duration := time.Since(start)
+
+		span.SetAttributes(attribute.Int("http.response.status_code", status))
+		if status == http.StatusInternalServerError {
+			// The failure is deliberate workload behavior, so record it as a real
+			// error with the reason instead of a silent success.
+			span.SetStatus(codes.Error, failBody)
 		}
 
-		fail := false
-		if query.Has("fail") {
-			// absent, "0" or "1" only; an explicitly empty fail is invalid.
-			switch query.Get("fail") {
-			case "0":
-			case "1":
-				fail = true
-			default:
-				writeText(w, http.StatusBadRequest, invalidBody)
-				return
-			}
+		w.Header().Set("Server-Timing", "app;dur="+strconv.FormatInt(duration.Milliseconds(), 10))
+		if env != "" {
+			w.Header().Set("X-App-Env", env)
 		}
+		writeText(w, status, body)
 
-		// Every parameter is validated before the requested delay is applied.
-		if delayMs > 0 {
-			time.Sleep(time.Duration(delayMs) * time.Millisecond)
-		}
-
-		if fail {
-			writeText(w, http.StatusInternalServerError, failBody)
-			return
-		}
-
-		w.Header().Set("X-App-Env", appEnv)
-		writeText(w, http.StatusOK, "Hello world from container-"+id+"\n")
+		slog.InfoContext(r.Context(), "request completed",
+			"trace_id", serverCtx.TraceID().String(),
+			"span_id", serverCtx.SpanID().String(),
+			"route", testRoute,
+			"status", status,
+			"duration_ms", duration.Milliseconds(),
+			"runtime_id", id,
+		)
 	}
+}
+
+// testResponse applies the bounded /test parameters and returns the response to
+// write. Every parameter is validated before the requested delay is applied, so
+// an invalid request is rejected immediately and never runs (or reports) the
+// selected delay.
+func testResponse(r *http.Request, id, appEnv string) (status int, body, env string) {
+	query := r.URL.Query()
+
+	delayMs := 0
+	if query.Has("delay_ms") {
+		// ParseUint rejects signs, whitespace, fractions and an explicitly empty
+		// value; the range check rejects values above the bound.
+		n, err := strconv.ParseUint(query.Get("delay_ms"), 10, 64)
+		if err != nil || n > maxDelayMs {
+			return http.StatusBadRequest, invalidBody, ""
+		}
+		delayMs = int(n)
+	}
+
+	fail := false
+	if query.Has("fail") {
+		// absent, "0" or "1" only; an explicitly empty fail is invalid.
+		switch query.Get("fail") {
+		case "0":
+		case "1":
+			fail = true
+		default:
+			return http.StatusBadRequest, invalidBody, ""
+		}
+	}
+
+	if delayMs > 0 {
+		time.Sleep(time.Duration(delayMs) * time.Millisecond)
+	}
+
+	if fail {
+		return http.StatusInternalServerError, failBody, ""
+	}
+	return http.StatusOK, "Hello world from container-" + id + "\n", appEnv
 }
 
 // writeText writes an exact text/plain response body. Callers set any extra
