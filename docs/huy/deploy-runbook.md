@@ -125,3 +125,64 @@ minDomains: 2
 ```
 
 Re-run `kubectl apply --dry-run=server -f k8s/app/` before applying that change.
+
+## 8. Monitoring stack (Stage 09B)
+
+Prometheus + Grafana run as `kube-prometheus-stack` release **`huy-monitoring`** in
+the **`monitoring`** namespace, scraping the app through a ServiceMonitor. The pinned
+chart version, the `helm show values` source and the component image digests are
+recorded in [`versions.md`](versions.md).
+
+`k8s/monitoring/values.yaml` is **Helm input only**. It is not a Kubernetes object —
+never `kubectl apply` the directory that contains it (only `k8s/monitoring/servicemonitor.yaml`
+is a real object). Apply it exclusively through `helm upgrade --install -f`.
+
+CRDs and the chart must exist **before** the ServiceMonitor is applied, because the
+`ServiceMonitor` kind is defined by the chart's Prometheus Operator CRDs.
+
+```sh
+export KUBECONFIG="$HOME/.kube/huy-k3s.yaml"
+
+# 1. Chart repo + pin (read-only)
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+helm show values prometheus-community/kube-prometheus-stack --version 92.3.0   # reference only
+
+# 2. Install/upgrade the stack (namespace created on first run). Values are Helm
+#    input; -f points at the file, the directory is never kubectl-applied.
+helm upgrade --install huy-monitoring prometheus-community/kube-prometheus-stack \
+  --version 92.3.0 \
+  --namespace monitoring --create-namespace \
+  -f k8s/monitoring/values.yaml \
+  --wait --timeout 10m
+
+# 3. Only now, with the CRDs present, apply the scrape target
+kubectl apply -f k8s/monitoring/servicemonitor.yaml
+
+# 4. Inspect reality
+kubectl -n monitoring get pods,svc,pvc
+```
+
+The `--wait` above waits for the release's workloads to become Ready; PVCs should be
+`Bound` (k3s local-path provisioner). After a few 15s scrapes, the target should be
+`Up`; confirm in the Prometheus UI (`Targets`) or via
+`kubectl -n monitoring get servicemonitor` then the Prometheus `targets` page.
+
+### Discoverable Service names come from this release
+
+The Services and PVCs that Prometheus/Grafana expose for UI forwarding and health are
+named after **this** release (`huy-monitoring-…`) and the Operator-created
+`prometheus-operated` Service — they are not guessed from, or shared with, any other
+chart release. Read the actual names from `kubectl -n monitoring get svc` before
+port-forwarding, rather than assuming another instance's names:
+
+```sh
+kubectl -n monitoring get svc
+kubectl -n monitoring port-forward svc/huy-monitoring-grafana 3000:80
+```
+
+The `kubernetes.io/metadata.name: monitoring` label the namespace carries (added
+automatically by Kubernetes) is what the release's Prometheus uses in
+`serviceMonitorNamespaceSelector`; the ServiceMonitor carries `release: huy-monitoring`
+to match `serviceMonitorSelector`. A wrong label on either side yields no targets
+silently, so verify the target is actually `Up` rather than assuming discovery worked.

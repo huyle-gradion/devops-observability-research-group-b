@@ -1,0 +1,29 @@
+# Scrape the devops-app Service from the monitoring namespace.
+#
+# Apply this ONLY after the kube-prometheus-stack CRDs and release exist
+# (the ServiceMonitor kind does not exist before the CRDs are installed):
+#   helm upgrade --install huy-monitoring ... -f k8s/monitoring/values.yaml --wait
+#   kubectl apply -f k8s/monitoring/servicemonitor.yaml
+#
+# The `release: huy-monitoring` label is what the release's Prometheus selects
+# (prometheus.prometheusSpec.serviceMonitorSelector.matchLabels.release in
+# values.yaml). The ServiceMonitor lives in `monitoring` and reaches the app
+# Service in `devops-app` via spec.namespaceSelector.matchNames.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: devops-app
+  namespace: monitoring
+  labels:
+    release: huy-monitoring
+spec:
+  namespaceSelector:
+    matchNames:
+      - devops-app
+  selector:
+    matchLabels:
+      app: devops-app
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 15s

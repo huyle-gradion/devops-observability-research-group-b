@@ -1,0 +1,87 @@
+# kube-prometheus-stack values for release `huy-monitoring` in namespace `monitoring`.
+#
+# Chart: prometheus-community/kube-prometheus-stack, pinned version 92.3.0
+# (see docs/huy/versions.md for the `helm show values` source and image digests).
+#
+# This file is Helm input, NOT a Kubernetes object. It must only ever be applied
+# through `helm upgrade --install -f ...`. Never `kubectl apply` this directory:
+# kubectl would treat these values as unknown-object YAML (or worse, guess).
+
+crds:
+  # Install/upgrade the Prometheus Operator CRDs (ServiceMonitor, Prometheus, ...).
+  # The ServiceMonitor in this directory depends on these CRDs existing first.
+  enabled: true
+
+# --- Alertmanager disabled: this project has no paging/alerting requirement. ---
+alertmanager:
+  enabled: false
+
+# --- Scrape jobs that a single-server k3s does not expose as separate,
+#     scrapeable control-plane endpoints. Leaving them enabled would create
+#     ServiceMonitors whose targets are permanently down. Each job is disabled
+#     through its own chart field, not by widening or dropping Prometheus.
+kubeScheduler:
+  enabled: false
+kubeControllerManager:
+  enabled: false
+kubeEtcd:
+  enabled: false
+kubeProxy:
+  enabled: false
+
+# --- Kept enabled: node/kubelet resource and object metrics (these are the
+#     sources for the per-pod CPU/memory panels in Stage 09C). ---
+kubelet:
+  enabled: true          # kubelet + embedded cAdvisor container metrics
+nodeExporter:
+  enabled: true
+kubeStateMetrics:
+  enabled: true
+
+prometheus:
+  prometheusSpec:
+    # Local learning budget: short retention so the 2Gi PVC is not a pretend cap.
+    retention: 24h
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: "1"
+        memory: 1Gi
+    # Persistent, cluster-local storage (k3s local-path provisioner).
+    # RWO is node-bound, not replicated/HA.
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: local-path
+          accessModes: ["ReadWriteOnce"]
+          resources:
+            requests:
+              storage: 2Gi
+    # Discovery contract: select ServiceMonitors ourselves instead of relying on
+    # chart-generated Helm labels, so the explicit release/project selectors below
+    # are the only thing that decides what this Prometheus scrapes.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorSelector:
+      matchLabels:
+        release: huy-monitoring
+    serviceMonitorNamespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: monitoring
+
+grafana:
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  persistence:
+    enabled: true
+    type: sts
+    storageClassName: local-path
+    accessModes:
+      - ReadWriteOnce
+    size: 1Gi

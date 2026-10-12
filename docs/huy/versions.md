@@ -56,7 +56,7 @@ actually checked.
 | Image digest (index) | `sha256:737f62c891b4f7fcebc3bf5c77e004ece31f12c4ee7854efe3eae21dc02fe430` | https://github.com/huyle-gradion/devops-observability-research-group-b/pkgs/container/devops-app-huy | 04 | 2026-10-11 |
 | Builder base index digest (`golang:1.27`) | `sha256:e432b43af23a9328d56a7c499be0476810aa344acbcf65fc7c455d4ff5a40602` | https://hub.docker.com/_/golang | 03 | 2026-10-11 |
 | Runtime base index digest (`gcr.io/distroless/static-debian13:nonroot`) | `sha256:e2e927ec666bae08560abb3c55d0659eceabb657f56b6782ab500a9fc7f555e3` | https://github.com/GoogleContainerTools/distroless | 03 | 2026-10-11 |
-| kube-prometheus-stack chart version | pending | pending | 09 | pending |
+| kube-prometheus-stack chart version | `92.3.0` (appVersion `v0.94.1`) | https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack | 09 (09B) | 2026-10-12 |
 | OpenTelemetry Collector version | pending | pending | 10 | pending |
 | Go module pins | pending | pending | 02 | pending |
 | GitHub Actions pinned revisions | see "GitHub Actions pins" below | per-action release pages | 04 | 2026-10-11 |
@@ -166,3 +166,55 @@ before installing.
 Confirmation requested before push, as for the Stage 04/05/04b pins: the
 `propose-deploy` job installs only this one new third-party binary and adds no
 `uses:` line, so no action commit SHA needs re-resolution for 08B.
+
+## Monitoring stack pins — Stage 09B (2026-10-12)
+
+Substep 09B pins the `kube-prometheus-stack` chart and resolves the component
+image digests for the `huy-monitoring` release. Observed and resolved on
+**2026-10-12** from the workstation.
+
+### Helm and chart pin
+
+| Item | Value | How observed |
+|---|---|---|
+| `helm` version | `v3.22.0` (`GitCommit 144ca65f8501953fa8b41cd1d37c7223051c85b7`, `GoVersion go1.26.8`) | `helm version` |
+| Chart repository | `prometheus-community` = `https://prometheus-community.github.io/helm-charts` | `helm repo add prometheus-community https://prometheus-community.github.io/helm-charts` |
+| Pinned chart version | `92.3.0` | `helm search repo prometheus-community/kube-prometheus-stack -l` (latest stable) |
+| Chart `appVersion` (kube-prometheus / Prometheus Operator) | `v0.94.1` | `helm show chart prometheus-community/kube-prometheus-stack --version 92.3.0` |
+| Values source | `helm show values prometheus-community/kube-prometheus-stack --version 92.3.0` (6219 lines, saved and inspected; not committed) | `helm show values ... --version 92.3.0` |
+
+The chart version is a moving target; it is pinned here and passed explicitly as
+`--version 92.3.0` on every Helm command, so a later `helm repo update` cannot
+silently change what gets installed.
+
+### Component image digests (multi-arch manifest-list digests)
+
+Resolved anonymously on 2026-10-12 with
+`docker buildx imagetools inspect <image>:<tag>`. Each value is the digest of the
+**manifest list** the chart's image tag resolves to (the index that serves both
+`linux/amd64` and `linux/arm64`), not a per-platform digest. These are what the
+pinned chart actually pulls; the chart values reference the tags above, so the
+digests are recorded for supply-chain reference, not substituted into objects.
+
+| Component | Image (chart tag) | Manifest-list digest |
+|---|---|---|
+| Prometheus | `quay.io/prometheus/prometheus:v3.15.0-distroless` | `sha256:b2a413d5a03ea6a76782a508d1c7947440bba3b973931a25676e278431891b01` |
+| Prometheus Config Reloader | `quay.io/prometheus-operator/prometheus-config-reloader:v0.94.1` | `sha256:06b52bd4dbe3ed6dd5905aadaf8b9987d9da4c31d37bb86deaadae68cee2d26b` |
+| Prometheus Operator | `quay.io/prometheus-operator/prometheus-operator:v0.94.1` | `sha256:7c88d4e7bae63bd8d0f8da986054337c23b4472fa8d3c6817f5bc4b8407a2d6a` |
+| Grafana | `docker.io/grafana/grafana:13.2.3-distroless` | `sha256:202e5d5b3f8499e70ccac7991eea6d7da72d2790eb2e0597e7987acf724e7180` |
+| Node Exporter | `quay.io/prometheus/node-exporter:v1.12.1-distroless` | `sha256:8c9bac11973b94b59be88d6e11fee4429aa743c8846cdc75d65b18db33f6a106` |
+| kube-state-metrics | `registry.k8s.io/kube-state-metrics/kube-state-metrics:v2.20.0` | `sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b` |
+
+Alertmanager is disabled in `k8s/monitoring/values.yaml`, so no Alertmanager image
+digest is recorded.
+
+Local, cluster-free validation of the values (`helm template`, no install) confirms
+the rendered Prometheus CR resources/retention/storage, the Grafana resources and
+1Gi PVC, and that only the apiserver/coredns/kubelet/operator/prometheus/grafana/
+kube-state-metrics/node-exporter ServiceMonitors are generated (scheduler,
+controller-manager, etcd and kube-proxy are absent as intended).
+
+**Unrun:** the actual `helm upgrade --install huy-monitoring ...` and the
+`kubectl apply -f k8s/monitoring/servicemonitor.yaml` were **not** run here — this
+worker has no kubeconfig and no cluster access. Sisyphus/owner runs the real install;
+these digests are what that install will pull.
