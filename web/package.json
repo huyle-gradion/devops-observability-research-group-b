@@ -7,6 +7,20 @@
   "scripts": {
     "build": "esbuild src/main.js --bundle --format=iife --target=es2015 --platform=browser --outfile=../app/static/app.js"
   },
+  "dependencies": {
+    "@opentelemetry/api": "1.9.1",
+    "@opentelemetry/context-zone": "2.12.0",
+    "@opentelemetry/core": "2.12.0",
+    "@opentelemetry/exporter-trace-otlp-http": "0.223.0",
+    "@opentelemetry/instrumentation": "0.223.0",
+    "@opentelemetry/instrumentation-document-load": "0.68.0",
+    "@opentelemetry/instrumentation-fetch": "0.223.0",
+    "@opentelemetry/instrumentation-xml-http-request": "0.223.0",
+    "@opentelemetry/resources": "2.12.0",
+    "@opentelemetry/sdk-trace-base": "2.12.0",
+    "@opentelemetry/sdk-trace-web": "2.12.0",
+    "web-vitals": "6.2.3"
+  },
   "devDependencies": {
     "esbuild": "0.28.2"
   }

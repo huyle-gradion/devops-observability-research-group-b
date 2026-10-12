@@ -12,6 +12,15 @@
         Clicking the button issues one real same-origin
         <code>GET /test?delay_ms=100</code> request to this same container.
       </p>
+      <p>
+        <small>
+          Experimental: this page uses the OpenTelemetry browser Web SDK
+          (document-load, fetch and XHR instrumentations) to export one trace to
+          the private Collector through a same-origin proxy. Browser
+          instrumentation is pre-stable, and a controlled session like this is
+          not a production real-user-monitoring cohort.
+        </small>
+      </p>
 
       <button id="run-test" type="button">Run test</button>
 
