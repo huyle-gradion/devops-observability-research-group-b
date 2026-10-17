@@ -272,3 +272,49 @@ so the check discriminates rather than rubber-stamping.
 **Unrun:** the image-form `docker run ... validate` (runbook §10.1) and every cluster step
 (`kubectl apply`, rollout status, port-forward) were **not** run here — no docker daemon
 and no cluster access. Sisyphus/owner runs them and captures the cluster evidence.
+
+## Research claim registry — versions and status (Stage 13A, 2026-10-13)
+
+This table records the observed **version/status** that the Stage 13A findings claims rest
+on ([`findings.md`](findings.md)). Every value was read from a committed project artifact
+(this repo) on 2026-10-13, or recorded by the producing stage named below; the Source URL
+is the canonical release/registry page for that version, not a re-fetched landing page.
+The primary **documentation pages** for each claim (with section anchors and checked dates)
+live in `findings.md`, not here.
+
+| Item | Observed value / status | Where observed | Source URL | Checked |
+|---|---|---|---|---|
+| OTel Collector (contrib distribution) | `0.162.0` (core module `v0.162.0`); `otlp_http` canonical, `otlphttp` deprecated alias | `k8s/tracing/collector.yaml`; Stage 10A | https://github.com/open-telemetry/opentelemetry-collector-releases/releases/tag/v0.162.0 | 2026-10-12 |
+| OpenTelemetry Go SDK | `go.opentelemetry.io/otel` `v1.47.0`; `otlptracehttp` `v1.47.0`; `otelhttp` `v0.72.0`; semconv `v1.43.0` | `app/go.mod` (read 2026-10-13) | https://pkg.go.dev/go.opentelemetry.io/otel@v1.47.0 | 2026-10-13 |
+| OpenTelemetry JS / browser packages | `@opentelemetry/sdk-trace-web` `2.12.0`; `api` `1.9.1`; `context-zone` `2.12.0`; `resources` `2.12.0`; `sdk-trace-base` `2.12.0`; `exporter-trace-otlp-http` `0.223.0`; `instrumentation` `0.223.0`; `instrumentation-fetch` `0.223.0`; `instrumentation-xml-http-request` `0.223.0`; `instrumentation-document-load` `0.68.0` | `web/package.json` (read 2026-10-13); **EXPERIMENTAL** browser instrumentation | https://www.npmjs.com/package/@opentelemetry/sdk-trace-web | 2026-10-13 |
+| `web-vitals` JS library | `6.2.3` | `web/package.json` (read 2026-10-13) | https://www.npmjs.com/package/web-vitals | 2026-10-13 |
+| `esbuild` (browser bundle) | `0.28.2` | `web/package.json` (read 2026-10-13) | https://www.npmjs.com/package/esbuild | 2026-10-13 |
+| Prometheus | chart tag `quay.io/prometheus/prometheus:v3.15.0-distroless` | `docs/huy/versions.md` Stage 09B | https://quay.io/repository/prometheus/prometheus?tab=tags | 2026-10-12 |
+| Grafana | chart tag `docker.io/grafana/grafana:13.2.3-distroless` | `docs/huy/versions.md` Stage 09B | https://hub.docker.com/r/grafana/grafana | 2026-10-12 |
+| `kube-prometheus-stack` chart | `92.3.0` (appVersion `v0.94.1`) | `docs/huy/versions.md` Stage 09B | https://github.com/prometheus-community/helm-charts/tree/main/charts/kube-prometheus-stack | 2026-10-12 |
+| k3s | `v1.37.1+k3s1` (single-node server) | `docs/huy/cluster-runbook.md`; `captures/huy/step-2/cluster.md` | https://github.com/k3s-io/k3s/releases/tag/v1.37.1%2Bk3s1 | 2026-10-11 |
+| kubectl | `v1.37.1` | `docs/huy/versions.md` Stage 08B | https://dl.k8s.io/release/v1.37.1/bin/linux/amd64/kubectl.sha256 | 2026-10-12 |
+| k6 | `v2.3.0` | `docs/huy/load-runbook.md`; `captures/huy/step-5/run-metadata.md` | https://github.com/grafana/k6/releases/tag/v2.3.0 | 2026-10-12 |
+| Argo CD | `v3.5.4` (pinned `manifests/install.yaml`) | `docs/huy/versions.md` Stage 08A; `captures/huy/bonus-1/adoption.md` | https://github.com/argoproj/argo-cd/releases/tag/v3.5.4 | 2026-10-12 |
+| Jaeger | `2.22.0` all-in-one (transient in-memory storage) | `docs/huy/versions.md` Stage 10A; `k8s/tracing/jaeger.yaml` | https://hub.docker.com/r/jaegertracing/jaeger | 2026-10-12 |
+| Trivy | `0.75.0` | `docs/huy/versions.md` Stage 04b; `captures/huy/bonus-4/trivy-image.json` | https://github.com/aquasecurity/trivy/releases/tag/v0.75.0 | 2026-10-12 |
+| Go toolchain | `go1.27.2 linux/amd64` | `docs/huy/versions.md` Stage 01 | https://go.dev/dl/ | 2026-10-11 |
+| Docker client + engine | `29.7.2` (API 1.55; containerd `v2.3.5`, runc `1.5.1`) | `docs/huy/versions.md` Stage 01 | https://docs.docker.com/engine/release-notes/ | 2026-10-11 |
+| Node.js / npm | `v26.10.0` / `11.19.1` | `docs/huy/versions.md` Stage 01 | https://nodejs.org/en/blog | 2026-10-11 |
+| cloudflared | `2026.8.3` | `docs/huy/versions.md` Stage 01 | https://github.com/cloudflare/cloudflared/releases | 2026-10-11 |
+| Tailscale | `1.102.3` | `docs/huy/versions.md` Stage 01 | https://tailscale.com/changelog | 2026-10-11 |
+
+### Moving-claim status carried by the registry
+
+Two findings rows are moving claims, not settled facts. Their current status is recorded in
+`findings.md` with explicit **recheck** entries dated **16 Oct 2026** and **30 Oct 2026**
+(both `pending` until performed):
+
+- **Immutable Actions rollout / OCI-on-GHCR claim** — see `findings.md` §a. The GitHub
+  changelog is the primary source; "Immutable Releases GA" does not by itself establish
+  Immutable Actions as OCI packages on GHCR.
+- **OpenTelemetry per-signal maturity** — see `findings.md` §e. The authoritative source is
+  <https://opentelemetry.io/status/>, which changes over time.
+
+No row above asserts a vendor "stable since" date or an endorsement; each value is the
+version actually observed in this project's artifacts.
